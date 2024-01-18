@@ -1,0 +1,11 @@
+.idea
+__pycache__
+*.log
+
+# ignore all files/directories that start with word "case"
+case* 
+
+GW_matlab/
+Results/
+Input/
+
