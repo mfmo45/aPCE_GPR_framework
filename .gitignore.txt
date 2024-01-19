@@ -3,7 +3,7 @@ __pycache__
 *.log
 
 # ignore all files/directories that start with word "case"
-case* 
+*case*
 
 GW_matlab/
 Results/
