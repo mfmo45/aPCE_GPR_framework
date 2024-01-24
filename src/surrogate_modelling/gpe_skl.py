@@ -321,7 +321,6 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
     ToDo: Like in BayesValidRox, estimate surrogate predictions here, by giving a surrogate object as input (maybe)
     ToDo: add as part of MyGeneralGPR class, and the outputs are a dictionary, with output type as a key.
     """
-    print('skl valid')
     criteria_dict = {'rmse': dict(),
                      'mse': dict(),
                      'nse': dict(),
