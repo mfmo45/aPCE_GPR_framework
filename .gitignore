@@ -1,0 +1,14 @@
+.idea
+__pycache__
+*.log
+
+# ignore all jupyter notebooks (for now)
+*.ipynb
+
+# ignore all folders/files that start with "test"
+test*
+
+
+GW_matlab/
+Results/
+Input/
