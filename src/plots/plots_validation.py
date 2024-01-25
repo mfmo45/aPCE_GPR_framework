@@ -121,16 +121,21 @@ def plot_validation_loc(eval_dict_list, label_list, output_names, n_loc, criteri
     plt.subplots_adjust(top=0.9, bottom=0.15, wspace=0.2, hspace=0.2)
 
 
-def plot_validation_tp(eval_dict_list, label_list, output_names, n_loc, criteria=None, plot_loc=False, fig_title=''):
-    """Function plots the evaluation criteria with increasing number of training points, for different scenarios that are to be compared.
+def plot_validation_tp(eval_dict_list, label_list, output_names, n_loc,
+                       criteria=None, plot_loc=False,
+                       x_label=None, fig_title=''):
+    """Function plots the evaluation criteria with increasing number of training points, for different scenarios that
+    are to be compared.
 
     Args:
-        eval_dict_list (list): of dictionaries, with each dictionary corresponding to the evaluation criteria for a given surrogate iteration. The dictionary must be filled with the "save_valid_criteria"
-        function
+        eval_dict_list (list): of dictionaries, with each dictionary corresponding to the evaluation criteria for a
+        given surrogate iteration. The dictionary must be filled with the "save_valid_criteria" function
         label_list (list): of strings, with labels for each scenario in eval_dict_list
         output_names (list): of strings with output type names
         n_loc (int): with the number of output locations pero output type
-        criteria (list, optional): of strings with the criteria to plot. Default is None, so all criteria are plotted. Defaults to None.
+        plot_loc (bool): True to plot (lighter) lines for each output location, False to only print mean of output locs
+        criteria (list, optional): of strings with the criteria to plot. Default is None, so all criteria are plotted.
+        Defaults to None.
         fig_title (str, optional): With figure title. Defaults to ''.
     """
 
@@ -178,11 +183,14 @@ def plot_validation_tp(eval_dict_list, label_list, output_names, n_loc, criteria
             ax[c, o].grid()
 
             ax[c, 0].set_ylabel(crit)
-            ax[-1, o].set_xlabel('Number of training points')
+            if x_label is None:
+                ax[-1, o].set_xlabel('Number of training points')
+            else:
+                ax[-1, o].set_xlabel(f'{x_label}')
             ax[0, o].set_title(f'{ot}', loc='left')
 
         if len(eval_dict_list) > 1:
             handles, labels = ax[0, 0].get_legend_handles_labels()
             fig.legend(handles=handles, labels=labels, loc="center right", ncol=1)
-            fig.suptitle(f'{fig_title}')
-            plt.subplots_adjust(top=0.9, bottom=0.15, wspace=0.2, hspace=0.2)
+        fig.suptitle(f'{fig_title}')
+        plt.subplots_adjust(top=0.9, bottom=0.15, wspace=0.2, hspace=0.2)
