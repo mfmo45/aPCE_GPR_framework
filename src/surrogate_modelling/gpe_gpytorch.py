@@ -445,23 +445,23 @@ class GPyTraining:
             with torch.no_grad():
                 f_pred = likelihood_(gp(prior_x))
                 prediction = f_pred.mean.numpy()
-                std = f_pred.variance.numpy()
+                std = f_pred.stddev.numpy()
                 if self.y_norm:  # Back-transform
                     # normalized results
                     prediction = self.gp_list[i]['y_norm'][1] * prediction + self.gp_list[i]['y_norm'][0]
-                    std = std * self.gp_list[i]['y_norm'][1]**2
+                    std = std * self.gp_list[i]['y_norm'][1]
 
                 surrogate_prediction[:, i] = prediction
                 surrogate_std[:, i] = std
 
                 # Calculate 95% confidence intervals.
                 if get_conf_int:
-                    upper_ci[:, i] = surrogate_prediction[:, i] + 2 * np.sqrt(surrogate_std[:, i])
-                    lower_ci[:, i] = surrogate_prediction[:, i] - 2 * np.sqrt(surrogate_std[:, i])
+                    upper_ci[:, i] = surrogate_prediction[:, i] + 2 * surrogate_std[:, i]
+                    lower_ci[:, i] = surrogate_prediction[:, i] - 2 * surrogate_std[:, i]
 
         output_dic = dict()
         output_dic['output'] = surrogate_prediction
-        output_dic['std'] = np.sqrt(surrogate_std)
+        output_dic['std'] = surrogate_std
         if get_conf_int:
             output_dic['upper_ci'] = upper_ci
             output_dic['lower_ci'] = lower_ci
