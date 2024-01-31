@@ -334,8 +334,12 @@ class aPCE:
         3. LARS: Least angle regression
         4. ARD: Bayesian ARD Regression
         5. FastARD: Fast Bayesian ARD Regression
-        6. VBL: Variational Bayesian Learning
-        7. EBL: Emperical Bayesian Learning
+        6. 'BCS': Bayesian Fast LaPlace
+        7. OMP: Orthogonal Matching Pursuit
+
+        Not yet:
+        8. VBL: Variational Bayesian Learning
+        9. EBL: Emperical Bayesian Learning
         Default is `OLS`.
 
         pce_degree = int  (ToDO: Not used right now, it must be the same as the pce_config.max_degree value. )
@@ -1025,16 +1029,17 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
                      'mean_error': dict(),
                      'std_error': dict()}
 
-    if isinstance(sim_y, dict) and 'std' in sim_y.keys():
-        sm_out = sim_y['output']
-        sm_std = sim_y['std']
-        upper_ci = sim_y['upper_ci']
-        lower_ci = sim_y['lower_ci']
+    if isinstance(sim_y, dict):
+        if 'std' in sim_y.keys():
+            sm_out = sim_y['output']
+            sm_std = sim_y['std']
+            upper_ci = sim_y['upper_ci']
+            lower_ci = sim_y['lower_ci']
 
-        criteria_dict['norm_error'] = dict()
-        criteria_dict['P95'] = dict()
-    else:
-        sm_out = sim_y
+            criteria_dict['norm_error'] = dict()
+            criteria_dict['P95'] = dict()
+        else:
+            sm_out = sim_y['output']
 
     # RMSE for each output location: not a dictionary (yet). [n_obs, ]
     rmse = sklearn.metrics.mean_squared_error(y_true=true_y, y_pred=sm_out, multioutput='raw_values',
@@ -1086,3 +1091,35 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
         c = c + n_per_type
 
     return rmse, criteria_dict
+
+
+def save_valid_criteria(new_dict, old_dict, n_tp):
+    """
+    Saves the validation criteria for the current iteration (n_tp) to an existing dictionary, so we can have the
+    results for all iterations in the same file. Each dictionary has a dictionary for each validation criteria.
+    Each validation criteria has a key for each output type, which corresponds to a vector with n_loc, one value for
+    each output value.
+    Args:
+        new_dict: Dict
+            with the validation criteria for the current iteration
+        old_dict: Dict
+            With the validation criteria for all the previous iterations, including a key for N_tp, which saves
+            the number of iteration.
+        n_tp: int
+            number of training points for the current BAL iteration.
+
+    Returns: dict, with the old dictionary, with the
+    """
+
+    if len(old_dict) == 0:
+        old_dict = dict(new_dict)
+        old_dict['N_tp'] = [n_tp]
+    else:
+        for key in old_dict:
+            if key == 'N_tp':
+                old_dict[key].append(n_tp)
+            else:
+                for out_type in old_dict[key]:
+                    old_dict[key][out_type] = np.vstack((old_dict[key][out_type], new_dict[key][out_type]))
+
+    return old_dict
