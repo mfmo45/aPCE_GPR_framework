@@ -1190,7 +1190,7 @@ class OrthogonalMatchingPursuit(LinearModel, RegressorMixin):
         # only the trace is, to save memory)
         PsiM = np.dot(psi, inv_inf_matrix)
 
-        h = np.sum(np.multiply(PsiM, psi), axis=1, dtype=np.float128)
+        h = np.sum(np.multiply(PsiM, psi), axis=1, dtype=np.float64)
 
         # ------ Calculate Error Loocv for each measurement point ----
         # Residuals
