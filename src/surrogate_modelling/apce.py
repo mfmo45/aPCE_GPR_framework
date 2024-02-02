@@ -623,7 +623,7 @@ class aPCE:
                                    sparsity=False)
                 self.pce_list.append(output)
 
-        # Evaluate apce at the training points:
+# Evaluate apce at the training points:
         self.surrogate_output = self.predict_(input_samples=self.training_points)
         # for i, y_ in enumerate(self.model_evaluations.T):
         #     self.surrogate_out[:, i] = self.predict(input_samples=self.collocation_points, i=i)[:, 0]
@@ -676,6 +676,9 @@ class aPCE:
         if reg_method.lower() == 'ols':
             # ordinary least squares method: equivalent to (scipy.linalg.pinv(np.dot(psi.T, psi)).dot(psi.T)).dot(y)
             clf_poly = lm.LinearRegression(fit_intercept=False)
+        elif reg_method.lower() == 'rr':
+            # ridge regression: L2 regularization
+            clf_poly = lm.Ridge(alpha=1)
         elif reg_method.lower() == 'brr':
             clf_poly = lm.BayesianRidge(n_iter=1000, tol=1e-7,
                                         fit_intercept=False,
