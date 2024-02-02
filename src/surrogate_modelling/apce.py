@@ -539,7 +539,13 @@ class aPCE:
         return psi
     # ------------------------------------------------------------------------------------------------------ #
 
-    def train_(self):
+    def train(self, initial_reg_method=None):
+        if self.var_cutoff == 0:
+            self._train_normal()
+        else:
+            self._train_with_retrain(initial_reg_method=initial_reg_method)
+
+    def _train_normal(self):
         """
         Trains a PCE model, given the PCE configuration input. It only trains the PCE once (no retrain if sparsity is
         used)
@@ -572,7 +578,7 @@ class aPCE:
         # for i, y_ in enumerate(self.model_evaluations.T):
         #     self.surrogate_out[:, i] = self.predict(input_samples=self.collocation_points, i=i)[:, 0]
 
-    def train_with_retrain_(self, initial_reg_method=None):
+    def _train_with_retrain(self, initial_reg_method=None):
         """
         Train the aPCE with sparsity and, after sparsity, the aPCE is retrained with the remaining coefficients.
         -------
@@ -612,18 +618,17 @@ class aPCE:
                 delayed(self._fit)(psi=temp_pce_list[i]['sparsePsi'],
                                    y=self.model_evaluations[:, i],
                                    basis_indices=temp_pce_list[i]['sparseMulti-Index'],
-                                   sparsity=False,
                                    )
                 for i in range(self.n_obs))
             self.pce_list = out
         else:
             for i, y_ in enumerate(self.model_evaluations.T):
                 output = self._fit(psi=temp_pce_list[i]['sparsePsi'], y=y_,
-                                   basis_indices=temp_pce_list[i]['sparseMulti-Index'],
-                                   sparsity=False)
+                                   basis_indices=temp_pce_list[i]['sparseMulti-Index']
+                                   )
                 self.pce_list.append(output)
 
-# Evaluate apce at the training points:
+        # Evaluate apce at the training points:
         self.surrogate_output = self.predict_(input_samples=self.training_points)
         # for i, y_ in enumerate(self.model_evaluations.T):
         #     self.surrogate_out[:, i] = self.predict(input_samples=self.collocation_points, i=i)[:, 0]
@@ -729,6 +734,7 @@ class aPCE:
         if sparsity:
             if var_cutoff == 0:
                 # remove all coefficients which are 0: only valid (will do sth) if a sparse solver is used.
+                # Original way done in BayesValidRox
                 nnz_idx = np.nonzero(clf_poly.coef_)[0]
             else:
                 var_cutoff = np.abs(var_cutoff)
@@ -763,18 +769,27 @@ class aPCE:
 
         sparse_coeffs_with_zeros = np.zeros(clf_poly.coef_.shape)
         sparse_coeffs_with_zeros[nnz_idx] = sparse_coeffs
-        # overwrite the coefficients for the sparse coefficients, for evaluations
-        clf_poly.coef_ = sparse_coeffs_with_zeros
 
-        # Evaluate fit:
-        if loo:
-            score, LCerror = self.corr_loocv_error(clf=clf_poly, psi=psi, coeffs=sparse_coeffs_with_zeros, y=y)
+        # overwrite the coefficients for the sparse coefficients, for evaluations (and also save the new basis_indices)
+        if var_cutoff == 0: # no retrain / final training
+            clf_poly.coef_ = sparse_coeffs
+            if loo:
+                # Evaluate fit
+                score, LCerror = self.corr_loocv_error(clf=clf_poly, psi=sparse_psi, coeffs=sparse_coeffs, y=y)
 
-        # Create a dict to pass the needed outputs
+        else:
+            clf_poly.coef_ = sparse_coeffs_with_zeros
+            if loo:
+                # Evaluate fir
+                score, LCerror = self.corr_loocv_error(clf=clf_poly, psi=psi, coeffs=sparse_coeffs_with_zeros, y=y)
+
+        # Create a dict to pass the needed outputs (always send the sparse-results, even if no sparsity is used)
         return_out_dict = dict()
         return_out_dict['clf_poly'] = clf_poly
-        return_out_dict['Multi-Index'] = basis_indices
-        return_out_dict['coeffs'] = sparse_coeffs_with_zeros
+        # return_out_dict['Multi-Index'] = basis_indices
+        return_out_dict['Multi-Index'] = sparse_basis_indices
+        # return_out_dict['coeffs'] = sparse_coeffs_with_zeros
+        return_out_dict['coeffs'] = sparse_coeffs
 
         return_out_dict['sparseMulti-Index'] = sparse_basis_indices
         return_out_dict['sparsePsi'] = sparse_psi
@@ -842,8 +857,9 @@ class aPCE:
                 if return_std:
                     sm_predictions[:, Idx], sm_std[:, Idx] = obj['clf_poly'].predict(psi_predict, return_std=True)
                 else:
-                    sm_predictions[:, Idx] = obj['clf_poly'].predict(psi_predict, return_std=True)
+                    sm_predictions[:, Idx] = obj['clf_poly'].predict(psi_predict)
             except:
+                print('An exception occurred, prediction is estimated manually')
                 return_std = False
                 get_conf_int = False
                 sm_predictions[:, Idx] = np.dot(psi_predict, obj['coeffs'])

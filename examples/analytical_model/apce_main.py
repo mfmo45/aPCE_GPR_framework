@@ -48,7 +48,7 @@ if __name__ == '__main__':
     # surrogate data .................................................................
     parallelize = False  # to parallelize training, BAL
 
-    pce_optimizer = 'BRR'  # optimizer for pce coefficients:
+    pce_optimizer = 'FastARD'  # optimizer for pce coefficients:
     degree = 5  # maximum pce order
     use_gpe = False  # True to add a GPE as an error model
 
@@ -186,10 +186,10 @@ if __name__ == '__main__':
         sm = aPCE(collocation_points=collocation_points, model_evaluations=model_evaluations,
                   pce_config=pce_config,
                   sparsity=True,
-                  variance_cutoff=0,
+                  variance_cutoff=0.8,
                   pce_reg_method=pce_optimizer)
 
-        sm.train_()
+        sm.train(initial_reg_method='BRR')
         # sm.train_with_retrain_(initial_reg_method='BRR')
 
         # 1.1 Error model:
