@@ -21,9 +21,8 @@ sys.path.append(str(par_path / 'src/utils'))
 from analytical_model import nonlinear_model
 
 from src.surrogate_modelling.bal_functions import BayesianInference, SequentialDesign
-from src.surrogate_modelling.apce import *
-from src.surrogate_modelling.gpe_skl import *
-from src.surrogate_modelling.gpe_gpytorch import *
+from src.surrogate_modelling.apce import PCEConfig, aPCE, validation_error, save_valid_criteria
+from src.surrogate_modelling.gpe_skl import SklTraining, RBF
 from src.surrogate_modelling.inputs import Input
 from src.surrogate_modelling.exp_design_ import ExpDesign
 
@@ -98,7 +97,7 @@ if __name__ == '__main__':
                            training_step=1,  # No. of training points to sample in each iteration
                            sampling_method='sobol',  # how to sample the initial training points
                            main_meta_model='apce',  # main surrogate method: 'gpr' or 'apce'
-                           n_initial_tp=5,  # Number of initial training points (min = n_trunc*2)
+                           n_initial_tp=50,  # Number of initial training points (min = n_trunc*2)
                            n_max_tp=55,  # max number of tp to use
                            training_method='sequential',  # normal (train only once) or sequential (Active Learning)
                            util_func='global_mc',  # criteria for bal (dkl, bme, ie, dkl_bme) or SF (default: global_mc)
@@ -187,11 +186,11 @@ if __name__ == '__main__':
         sm = aPCE(collocation_points=collocation_points, model_evaluations=model_evaluations,
                   pce_config=pce_config,
                   sparsity=True,
-                  variance_cutoff=0.90,
+                  variance_cutoff=0,
                   pce_reg_method=pce_optimizer)
 
         sm.train_()
-        # sm.train_with_retrain_(initial_reg_method=None)
+        # sm.train_with_retrain_(initial_reg_method='BRR')
 
         # 1.1 Error model:
         if exp_design.secondary_model:
