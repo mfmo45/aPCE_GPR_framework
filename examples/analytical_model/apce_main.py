@@ -208,14 +208,11 @@ if __name__ == '__main__':
         # 2. Validate GPR
         if it % exp_design.eval_step == 0 or it == exp_design.n_iter:
 
-            valid_sm = sm.predict_(input_samples=exp_design.val_x, return_std=True, get_conf_int=True)
+            valid_sm = sm.predict_(input_samples=exp_design.val_x, get_conf_int=True)
             if exp_design.secondary_model:
                 valid_em = em.predict_(exp_design.val_x, get_conf_int=False)
                 valid_sm['output'] = valid_sm['output'] + valid_em['output']
-                try:
-                    valid_sm['std'] = valid_sm['std'] + valid_em['std']
-                except:
-                    valid_sm['std'] = valid_em['std']
+                valid_sm['std'] = valid_sm['std'] + valid_em['std']
 
             rmse_sm, run_valid = validation_error(true_y=exp_design.val_y, sim_y=valid_sm,
                                                   n_per_type=n_loc, output_names=output_names)
@@ -239,14 +236,11 @@ if __name__ == '__main__':
             print('saving')
 
         # 3. Compute Bayesian scores in parameter space ----------------------------------------------------------
-        surrogate_output = sm.predict_(input_samples=prior, return_std=True, get_conf_int=True)
+        surrogate_output = sm.predict_(input_samples=prior, get_conf_int=True)
         if exp_design.secondary_model:
             error_output = em.predict_(input_sets=prior, get_conf_int=False)
             surrogate_output['output'] = surrogate_output['output'] + error_output['output']
-            try:
-                surrogate_output['std'] = surrogate_output['std'] + error_output['std']
-            except:
-                surrogate_output['std'] = error_output['std']
+            surrogate_output['std'] = surrogate_output['std'] + error_output['std']
 
         total_error = (error_pp ** 2)
         bi_gpe = BayesianInference(model_predictions=surrogate_output['output'], observations=obs, error=total_error,
@@ -347,7 +341,7 @@ if __name__ == '__main__':
     # %% [markdown]
     # ### Plot validation results ...........................................................................
     # Validation for final trained surrogate
-    surrogate_output = sm.predict_(input_samples=prior, return_std=True, get_conf_int=True)
+    surrogate_output = sm.predict_(input_samples=prior, get_conf_int=True)
     plot_correlation(sm_out=valid_sm['output'], valid_eval=exp_design.val_y,
                      output_names=output_names,
                      label_list=[f"{np.mean(eval_dict['r2']['Z'][-1, :]):0.3f}"],

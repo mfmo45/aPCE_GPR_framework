@@ -803,7 +803,7 @@ class aPCE:
 
     # ----------------------------------------------------------------------------------------------------- #
 
-    def predict_(self, input_samples, return_std=False, get_conf_int=False, i=None):
+    def predict_(self, input_samples, get_conf_int=False, i=None):
         """
         Function evaluates the PCE surrogate for a given output loc "i", on a set of input parameter sets.
 
@@ -813,8 +813,6 @@ class aPCE:
             with input data sets
         i: int
             index for output location. Default is None, and the prediction for all output locations is estimated
-        return_std: bool
-            True to return standard deviation
         get_conf_int: bool
             True to return confidence intervals
 
@@ -834,39 +832,26 @@ class aPCE:
         sm_predictions = np.zeros((input_samples.shape[0], int(end-start)))
         sm_std = np.zeros((input_samples.shape[0], int(end - start)))
 
-        # sm_predictions_old = np.zeros((input_samples.shape[0], int(end - start)))
-
         for Idx in range(start, end):
             # Extract the corresponding trained object
             obj = self.pce_list[Idx]
-
-            # # Generate PSI matrix: based on (sparse) basis indices: ORIGINAL with sparse multi index
-            # psi_predict_old = self.generate_psi(max_degree=self.pce_degree, sample=self.collocation_points,
-            #                                 basis_indices=obj['spareMulti-Index'])
-            # # Predict for input_samples
-            # try:
-            #     sm_predictions_old[:, Idx] = obj['clf_poly'].predict(psi_predict_old)
-            # except:
-            #     sm_predictions_old[:, Idx] = np.dot(psi_predict_old, obj['sparse_coeffs'])
 
             # NEW:
             psi_predict = self.generate_psi(max_degree=self.pce_degree, sample=input_samples,
                                             basis_indices=obj['Multi-Index'])
             # Predict for input_samples
             try:
-                if return_std:
-                    sm_predictions[:, Idx], sm_std[:, Idx] = obj['clf_poly'].predict(psi_predict, return_std=True)
-                else:
-                    sm_predictions[:, Idx] = obj['clf_poly'].predict(psi_predict)
+                sm_predictions[:, Idx], sm_std[:, Idx] = obj['clf_poly'].predict(psi_predict, return_std=True)
             except:
-                print('An exception occurred, prediction is estimated manually')
-                return_std = False
+                try:
+                    sm_predictions[:, Idx] = obj['clf_poly'].predict(psi_predict)
+                except:
+                    print('An exception occurred, prediction is estimated manually')
+                    sm_predictions[:, Idx] = np.dot(psi_predict, obj['coeffs'])
                 get_conf_int = False
-                sm_predictions[:, Idx] = np.dot(psi_predict, obj['coeffs'])
 
-        output_dict = {'output': sm_predictions}
-        if return_std:
-            output_dict['std'] = sm_std
+        output_dict = {'output': sm_predictions,
+                       'std': sm_std}
         if get_conf_int:
             output_dict['upper_ci'] = sm_predictions + 2*sm_std
             output_dict['lower_ci'] = sm_predictions + 2 * sm_std
@@ -1049,7 +1034,7 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
                      'std_error': dict()}
 
     if isinstance(sim_y, dict):
-        if 'std' in sim_y.keys():
+        if 'upper_ci' in sim_y.keys():
             sm_out = sim_y['output']
             sm_std = sim_y['std']
             upper_ci = sim_y['upper_ci']
@@ -1091,7 +1076,7 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
         #                                                                              ddof=1, axis=0)
 
         # Norm error: only if std is available
-        if isinstance(sim_y, dict) and 'std' in sim_y.keys():
+        if isinstance(sim_y, dict) and 'upper_ci' in sim_y.keys():
             # Normalized error
             ind_val = np.divide(np.subtract(sm_out[:, c:c + n_per_type], true_y[:, c:c + n_per_type]),
                                 sm_std[:, c:c + n_per_type])
