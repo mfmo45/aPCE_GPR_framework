@@ -571,7 +571,7 @@ class aPCE:
                                    sparsity=self.sparsity, var_cutoff=self.var_cutoff)
                 self.pce_list.append(output)
 
-        self.surrogate_output = self.predict_(input_samples=self.training_points)['output']
+        self.surrogate_output = self.predict_(input_sets=self.training_points)['output']
         self.surrogate_error = np.subtract(self.surrogate_output, self.model_evaluations)
 
         # Evaluate apce at the training points:
@@ -629,7 +629,7 @@ class aPCE:
                 self.pce_list.append(output)
 
         # Evaluate apce at the training points:
-        self.surrogate_output = self.predict_(input_samples=self.training_points)
+        self.surrogate_output = self.predict_(input_sets=self.training_points)
         # for i, y_ in enumerate(self.model_evaluations.T):
         #     self.surrogate_out[:, i] = self.predict(input_samples=self.collocation_points, i=i)[:, 0]
 
@@ -803,13 +803,13 @@ class aPCE:
 
     # ----------------------------------------------------------------------------------------------------- #
 
-    def predict_(self, input_samples, get_conf_int=False, i=None):
+    def predict_(self, input_sets, get_conf_int=False, i=None):
         """
         Function evaluates the PCE surrogate for a given output loc "i", on a set of input parameter sets.
 
         Parameters
         ----------
-        input_samples: np.array [mc_size, n_params]
+        input_sets: np.array [mc_size, n_params]
             with input data sets
         i: int
             index for output location. Default is None, and the prediction for all output locations is estimated
@@ -829,15 +829,15 @@ class aPCE:
             start = i
             end = i+1
 
-        sm_predictions = np.zeros((input_samples.shape[0], int(end-start)))
-        sm_std = np.zeros((input_samples.shape[0], int(end - start)))
+        sm_predictions = np.zeros((input_sets.shape[0], int(end-start)))
+        sm_std = np.zeros((input_sets.shape[0], int(end - start)))
 
         for Idx in range(start, end):
             # Extract the corresponding trained object
             obj = self.pce_list[Idx]
 
             # NEW:
-            psi_predict = self.generate_psi(max_degree=self.pce_degree, sample=input_samples,
+            psi_predict = self.generate_psi(max_degree=self.pce_degree, sample=input_sets,
                                             basis_indices=obj['Multi-Index'])
             # Predict for input_samples
             try:
@@ -890,7 +890,7 @@ class aPCE:
                 score_.append(score)
                 LCerror_.append(LCerror)
             elif method == 'validation':
-                model_predictions = self.predict(input_samples=validation_input, i=i)
+                model_predictions = self.predict(input_sets=validation_input, i=i)
                 score_.append(self.validation_error(model_predictions, validation_output[:, i]))
 
         return np.mean(score_)
