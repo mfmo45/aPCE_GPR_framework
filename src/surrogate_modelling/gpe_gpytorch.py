@@ -87,8 +87,8 @@ class GPyTraining:
     """
 
     def __init__(self, collocation_points, model_evaluations, kernel, training_iter, likelihood,
-                 y_normalization=True, tp_normalization=False, optimizer="adam", lr = 0.5,
-                 loss='exact', n_restarts=1,
+                 y_normalization=True, tp_normalization=False, optimizer="adam", lr=0.5,
+                 loss='exact', n_restarts=1, weight_decay=0,
                  gradient_free_start=False,
                  verbose=True,
                  parallelize=False):
@@ -110,6 +110,7 @@ class GPyTraining:
         self.n_restarts = n_restarts
         self.gradient_free_start = gradient_free_start
         self.lr = lr
+        self.weight_decay = weight_decay
 
         # self.likelihood = likelihood
 
@@ -251,7 +252,7 @@ class GPyTraining:
 
             # Setup Optimizer
             if self.optimizer_ == 'adam':
-                optimizer = torch.optim.Adam(gp.parameters(), lr=self.lr)
+                optimizer = torch.optim.Adam(gp.parameters(), lr=self.lr, weight_decay=self.weight_decay)
             elif self.optimizer_ == 'lbfgs':
                 optimizer = torch.optim.lbfgs(gp.parameters(), lr=self.lr)
             else:
