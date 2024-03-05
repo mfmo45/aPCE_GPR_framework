@@ -493,7 +493,7 @@ class ExpDesign:
             self.kernel_data['length_scale'] = list(np.full(self.ndim, 1.0))
 
             value = np.empty((), dtype=object)
-            value[()] = (1e-5, 1e5)
+            value[()] = (1e-5, 1e3)
             if not hp_isotropic:
                 self.kernel_data['bounds'] = list(np.full(self.ndim, value, dtype=object))
             else:
