@@ -61,7 +61,7 @@ if __name__ == '__main__':
     input_data_path = None
 
     n_loc = 10  # number of output locations
-    ndim = 2  # number of parameters
+    ndim = 3  # number of parameters
     output_names = ['Z']  # output names
 
     pt_loc = np.arange(0, n_loc, 1.) / (n_loc - 1)  # location of ouput locations  (could be read from a )
@@ -113,7 +113,7 @@ if __name__ == '__main__':
 
     if exp_design.main_meta_model == 'apce':
         raw_data = exp_design.generate_samples(n_samples=100_000, sampling_method='random')
-        pce_config = PCEConfig(max_degree=degree, prior_samples=raw_data)
+        pce_config = PCEConfig(max_degree=degree, prior_samples=raw_data, q_norm=0.9)
         pce_config.setup_apce()
 
     # Create folder for specific case ....................................................................
