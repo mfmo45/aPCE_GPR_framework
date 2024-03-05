@@ -75,12 +75,13 @@ class BayesianInference:
     ToDo: Add posterior MCMC sampling methods
     """
 
-    def __init__(self, model_predictions, observations, error, prior=None, prior_log_pdf=None,
+    def __init__(self, model_predictions, observations, error, prior=None, prior_log_pdf=None, model_error=None,
                  sampling_method='rejection_sampling'):
 
         self.observations = observations
         self.error = error
         self.model_predictions = model_predictions
+        self.model_error = model_error
         self.prior = prior
         self.post_sampling_method = sampling_method
 
@@ -176,6 +177,50 @@ class BayesianInference:
         total_inside_exponent = np.reshape(total_inside_exponent,
                                            (total_inside_exponent.shape[1], total_inside_exponent.shape[2]))
 
+        # likelihood = const_mvn * np.exp(-0.5 * total_inside_exponent)
+        likelihood = np.exp(-0.5 * total_inside_exponent)
+
+        # Convert likelihoods to vector:
+        if likelihood.shape[1] == 1:
+            likelihood = likelihood[:, 0]
+        self.likelihood = likelihood
+
+    def calculate_likelihood_with_error(self):
+        """
+        Function calculates likelihood between observations and the model output manually, using numpy calculations. It
+        considers model error, with an error associated to each model prediction.
+
+        Notes:
+        * Generates likelihood array with size [MCxN], where N is the number of measurement data sets.
+        * Likelihood function is multivariate normal distribution, considering independent and Gaussian-distributed
+        errors.
+        * Method is faster than using stats module ('calculate_likelihood' function).
+        """
+        # Calculate augmented covariance:
+        mc_size = self.model_predictions.shape[0]
+        cov_3d = np.tile(self.cov_mat[np.newaxis, :, :], (mc_size, 1, 1))   # make 3D (1 cov per MC run)
+        std_3d = np.array([np.diag(row) for row in self.model_error])     # make 3D matrix for std
+        self.augmented_cov = cov_3d + std_3d**2                           # combine covariances
+
+        det_R = np.linalg.det(self.augmented_cov)
+        invR = np.linalg.inv(self.augmented_cov)
+        const_mvn = pow(2 * math.pi, - self.observations.shape[1] / 2) * (1 / np.sqrt(det_R)).reshape(-1, 1)  # can't ignore
+
+        # vectorize means:
+        means_vect = self.observations[:, np.newaxis]  # ############
+
+        # Calculate differences and convert to 4D array (and its transpose):
+        diff = means_vect - self.model_predictions  # Shape: # means
+        diff_4d = diff[:, :, np.newaxis]
+        transpose_diff_4d = diff_4d.transpose(0, 1, 3, 2)
+
+        # Calculate values inside the exponent
+        inside_1 = np.einsum("abcd, bdd->abcd", diff_4d, invR)
+        inside_2 = np.einsum("abcd, abdc->abc", inside_1, transpose_diff_4d)
+        total_inside_exponent = inside_2.transpose(2, 1, 0)
+        total_inside_exponent = np.reshape(total_inside_exponent,
+                                           (total_inside_exponent.shape[1], total_inside_exponent.shape[2]))
+
         likelihood = const_mvn * np.exp(-0.5 * total_inside_exponent)
 
         # Convert likelihoods to vector:
@@ -243,7 +288,11 @@ class BayesianInference:
             BME = ELPD, and thus RE is also 0, since nothing mas learned.
         """
         # 1. Prior Likelihood
-        self.calculate_likelihood_manual()
+        if self.model_error is None:
+            self.calculate_likelihood_manual()
+        else:
+            self.calculate_likelihood_with_error()
+
         # 2. prior-based BME
         self.BME = np.mean(self.likelihood)
 
