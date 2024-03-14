@@ -535,6 +535,7 @@ class SequentialDesign:
             candidate_idx = self.select_indexes(prior_samples=prior_samples,
                                                 collocation_points=self.SM.training_points)
             all_candidates = prior_samples[candidate_idx, :]
+            # Update number of mc_samples: 
             score_exploration = np.zeros(self.mc_samples)
         else:
             explore = Exploration(n_candidate=self.mc_samples,
@@ -686,6 +687,10 @@ class SequentialDesign:
         else:
             print('The selected utility function is not yet available. ')
             # '''ToDO: add BIC, DIC, KIC (from BayesValidRox) and posterior-based criteria.'''
+
+        # Catch if U_j_d is nan or inf, and replace by 0, since we are maximizing
+        if np.isnan(u_j_d) or u_j_d == -np.inf or u_j_d == np.inf:
+            u_j_d = 0.0
 
         return u_j_d
 
