@@ -561,14 +561,23 @@ class SequentialDesign:
         # Implement the sequential design method
         if 'bal' in exp_design.exploit_method.lower():  # for BAL and AL methods
             # Split the candidates in groups for multiprocessing
-            if 'dkl' in util_fun.lower() and 'bme' in util_fun.lower():
+
+            if 'dkl' in util_fun.lower() and 'post_bme' in util_fun.lower():
+                # randomly select whether we use bme or dkl, with a 50-50 chance each
+                rand_n = stats.uniform.rvs(size=1)  # random numbers
+                if rand_n < 0.5:
+                    util_fun = 'post_bme'
+                else:
+                    util_fun = 'dkl'
+
+            elif 'dkl' in util_fun.lower() and 'bme' in util_fun.lower():
                 # randomly select whether we use bme or dkl, with a 50-50 chance each
                 rand_n = stats.uniform.rvs(size=1)  # random numbers
                 if rand_n < 0.5:
                     util_fun = 'bme'
                 else:
                     util_fun = 'dkl'
-                stop = 1
+
             # for traditional approach, we can't get a posterior logBME
             if 'post_bme' in util_fun.lower() and not self.gaussian_assumption:
                 util_fun = 'bme'
