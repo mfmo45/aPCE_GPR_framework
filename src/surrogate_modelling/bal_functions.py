@@ -78,6 +78,7 @@ class BayesianInference:
     def __init__(self, model_predictions, observations, error, prior=None, prior_log_pdf=None, model_error=None,
                  sampling_method='rejection_sampling'):
 
+        self.use_log = True
         self.observations = observations
         self.error = error
         self.model_predictions = model_predictions
@@ -89,6 +90,7 @@ class BayesianInference:
 
         self.cov_mat = None
         self.likelihood = None
+        self.log_likelihood = None
 
         self.post_likelihood = None
         self.posterior = None
@@ -179,10 +181,13 @@ class BayesianInference:
 
         # likelihood = const_mvn * np.exp(-0.5 * total_inside_exponent)
         likelihood = np.exp(-0.5 * total_inside_exponent)
+        log_likelihood = -0.5 * total_inside_exponent
 
         # Convert likelihoods to vector:
-        if likelihood.shape[1] == 1:
+        if log_likelihood.shape[1] == 1:
             likelihood = likelihood[:, 0]
+            log_likelihood = log_likelihood[:, 0]
+        self.log_likelihood = log_likelihood
         self.likelihood = likelihood
 
     def calculate_likelihood_with_error(self):
@@ -204,7 +209,9 @@ class BayesianInference:
 
         det_R = np.linalg.det(self.augmented_cov)
         invR = np.linalg.inv(self.augmented_cov)
-        const_mvn = pow(2 * math.pi, - self.observations.shape[1] / 2) * (1 / np.sqrt(det_R)).reshape(-1, 1)  # can't ignore
+        # Can't ignore constant
+        const_mvn = pow(2 * math.pi, - self.observations.shape[1] / 2) * (1 / np.sqrt(det_R)).reshape(-1, 1)
+        log_constant = self.observations.shape[1] * math.log(2 * math.pi) + math.log(det_R)
 
         # vectorize means:
         means_vect = self.observations[:, np.newaxis]  # ############
@@ -222,10 +229,13 @@ class BayesianInference:
                                            (total_inside_exponent.shape[1], total_inside_exponent.shape[2]))
 
         likelihood = const_mvn * np.exp(-0.5 * total_inside_exponent)
+        log_likelihood = -0.5*(log_constant + total_inside_exponent)
 
         # Convert likelihoods to vector:
-        if likelihood.shape[1] == 1:
+        if log_likelihood.shape[1] == 1:
+            log_likelihood = log_likelihood[:, 0]
             likelihood = likelihood[:, 0]
+        self.log_likelihood = log_likelihood
         self.likelihood = likelihood
 
     def rejection_sampling(self):
@@ -241,40 +251,29 @@ class BayesianInference:
         """
         # Generate MC number of random values between 1 and 0 (uniform dist) ---------------------------------------- #
         rn = stats.uniform.rvs(size=self.model_predictions.shape[0])  # random numbers
-        max_likelihood = np.max(self.likelihood)  # Max likelihood
 
-        # Rejection sampling --------------------------------------------------------------------------------------- #
-        if max_likelihood > 0:
-            # 1. Get indexes of likelihood values whose normalized values < RN
-            post_index = np.array(np.where(self.likelihood / max_likelihood > rn)[0])
-            # 2. Get posterior_likelihood:
-            self.post_likelihood = np.take(self.likelihood, post_index, axis=0)
+        if self.log_likelihood is not None and self.use_log:
+            log_rn = np.log(rn)
+            max_likelihood = np.max(self.log_likelihood)
+            # post_index = np.array(np.where(np.exp(self.log_likelihoodlikelihood - max_likelihood) > rn)[0])  # using
+            post_index = np.array(np.where(self.log_likelihood - max_likelihood > log_rn)[0])
 
-            # 3. Get posterior values:
-            if self.post_likelihood.shape[0] > 0:
-                self.posterior_output = np.take(self.model_predictions, post_index, axis=0)
-                if self.prior is not None:
-                    self.posterior = np.take(self.prior, post_index, axis=0)
+            # 2. Get posterior distributions:
+            self.post_loglikelihood = np.take(self.log_likelihood, post_index, axis=0)
 
-            # 4. Get posterior log-pdf values:
-            if self.prior_logpdf is not None:
-                self.post_logpdf = self.prior_logpdf[post_index]
-
-            # # 4. Get posterior density values (and multiply all values in given data set):
-            # pdf = np.take(self.prior_density, post_index, axis=0)
-            # self.post_density = np.prod(pdf, axis=1)
-            # # 5. Get posterior output values:
-            # self.post_output = np.take(self.output, post_index, axis=0)
         else:
-            # All posterior values are equal to prior values:
-            self.post_likelihood = np.array([])   # empty, since nothing goes to posterior
-            self.posterior_output = self.model_predictions
-            if self.prior is not None:
-                self.posterior = self.prior
+            max_likelihood = np.max(self.likelihood)  # Max likelihood
+            post_index = np.array(np.where(self.likelihood / max_likelihood > rn)[0])
+            self.post_likelihood = np.take(self.likelihood, post_index, axis=0)
+            self.post_loglikelihood = np.log(self.post_likelihood)
 
-            # FUTURE IE
-            # self.post_density = np.prod(self.prior_density, axis=1)
-            # self.post_output = self.output
+        # Get posterior samples
+        self.posterior_output = np.take(self.model_predictions, post_index, axis=0)
+        if self.prior is not None:
+            self.posterior = np.take(self.prior, post_index, axis=0)
+        # 4. Get posterior log-pdf values:
+        if self.prior_logpdf is not None:
+            self.post_logpdf = self.prior_logpdf[post_index]
 
     def estimate_bme(self):
         """
@@ -293,36 +292,41 @@ class BayesianInference:
         else:
             self.calculate_likelihood_with_error()
 
-        # 2. prior-based BME
-        self.BME = np.mean(self.likelihood)
+        # Posterior sampling:
+        if 'bayesian_weighting' in self.post_sampling_method.lower():  # Bayesian weighting
+            # 3. Posterior estimation using Bayesian weighting
+            non_zero_lk = self.likelihood[np.where(self.likelihood != 0)]
+            post_w = non_zero_lk / np.sum(non_zero_lk)
 
-        if self.BME > 0:
-            # With Bayesian weighting
-            if 'bayesian_weighting' in self.post_sampling_method.lower():  # Bayesian weighting
-                # 3. Posterior estimation using Bayesian weighting
-                non_zero_lk = self.likelihood[np.where(self.likelihood != 0)]
-                post_w = non_zero_lk / np.sum(non_zero_lk)
+            # 4. Posterior-based scores
+            self.BME = np.mean(self.likelihood)
+            self.ELPD = np.sum(post_w * np.log(non_zero_lk))
 
-                # 4. Posterior-based scores
-                self.ELPD = np.sum(post_w * np.log(non_zero_lk))
+        elif 'rejection_sampling' in self.post_sampling_method.lower():  # rejection sampling
+            # 3. Posterior estimation/sampling
+            self.rejection_sampling()
 
-            elif 'rejection_sampling' in self.post_sampling_method.lower():  # rejection sampling
-                # 3. Posterior estimation/sampling
-                self.rejection_sampling()
+            # 2. prior-based BME
+            if self.log_likelihood is not None and self.use_log:  # estimate using log-likelihoods
+                self.BME = np.mean(np.exp(self.log_likelihood))
+                self.ELPD = np.mean(self.post_loglikelihood)
 
-            # 4. MC-sampling-based Posterior-based scores
-            self.ELPD = np.mean(np.log(self.post_likelihood))
+            else:
+                self.BME = np.mean(self.likelihood)
+                self.ELPD = np.mean(np.log(self.post_likelihood))
+
+        # If BME is 0:
+        if self.BME == 0:
+            # print('BME is 0, so we use stupid number ***********************')
+            # RE = ELPD - np.log(1e-300)
+            self.RE = math.nan
+            self.IE = math.nan
+        else:
             self.RE = self.ELPD - np.log(self.BME)
-
             if self.prior_logpdf is not None:
                 self.IE = np.log(self.BME) - np.mean(self.post_logpdf) - self.ELPD
-
-        else:
-            # If BME = 0
-            self.ELPD = 0.0
-            self.RE = 0.0
-            self.IE = 0.0
-            self.post_likelihood = np.array([])   # Empty array
+            else:
+                self.IE = None
 
 
 class BAL:
@@ -535,7 +539,7 @@ class SequentialDesign:
             candidate_idx = self.select_indexes(prior_samples=prior_samples,
                                                 collocation_points=self.SM.training_points)
             all_candidates = prior_samples[candidate_idx, :]
-            # Update number of mc_samples: 
+            # Update number of mc_samples:
             score_exploration = np.zeros(self.mc_samples)
         else:
             explore = Exploration(n_candidate=self.mc_samples,
