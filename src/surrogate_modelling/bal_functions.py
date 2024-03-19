@@ -702,6 +702,73 @@ class SequentialDesign:
 
         return u_j_d
 
+    def analytical_bal(self, y_mean, y_std, observations, error, utility_function='dkl'):
+        """Function computes the analytical BAL criteria (IE or DKL), when the prior and likelihood are both Gaussian
+        distributions. It first estimates the posterior distribution, and then estimates either the Dkl or IE.
+        For ill-posed priors, we check if the prior and posterior MG distributions overlap in any dimension, if not,
+        then the BAl criteria are not estimated.
+
+        The post logBME equation was obtained from Oladyshkin and Nowak (2019) (doi: 10.3390/e21111081), eq.(28)
+
+        Args:
+            y_mean : array [n_samples, n_obs]  array with ith surrogate model outputs (mean)
+            y_std : array [n_samples, n_obs]   array with output standard deviation
+            observations : array [n_obs, ] array with measured observations
+            error : array [n_obs]  array with the observation errors associated to each output
+            utility_function : string, optional, BAL design criterion. The default is 'DKL'.
+
+        Returns:
+            float: analytical BAL criteria for the given input distribution
+        """
+        n_obs = observations.shape[0]
+
+        if observations.ndim == 2:
+            observations = observations.reshape(-1)
+
+        # Prior
+        prior_cov = np.diag(y_std ** 2)
+
+        # Likelihood: observation info
+        error_cov = np.diag(error)
+
+        # Estimate posterior analytically
+        posterior_var_mv = np.linalg.inv(np.add(np.linalg.inv(error_cov), np.linalg.inv(prior_cov)))
+        posterior_mean_mv = np.dot(posterior_var_mv,
+                                   np.dot(np.linalg.inv(prior_cov), y_mean) + np.dot(np.linalg.inv(error_cov),
+                                                                                     observations))
+        # Check if MG overlap
+        if self.gaussian_overlap(mu1=y_mean, cov1=prior_cov, mu2=posterior_mean_mv, cov2=posterior_var_mv):
+            if utility_function == 'dkl':
+                u_j_d = self.multivariate_gaussian_kl_divergence(mu_p=posterior_mean_mv, cov_p=posterior_var_mv,
+                                                                 mu_q=y_mean, cov_q=prior_cov)
+            elif utility_function == 'ie':
+                u_j_d = 0.5 * np.log(((2 * math.pi * math.e) ** n_obs) * np.linalg.det(posterior_var_mv))
+                u_j_d = -1 * u_j_d
+
+            elif utility_function == 'post_bme':  # post log(BME)
+                # Sample from posterior
+                posterior_mv = stats.multivariate_normal(mean=posterior_mean_mv, cov=posterior_var_mv)
+                posterior_samples_mv = posterior_mv.rvs(size=self.mc_exploration)
+
+                IE = 0.5 * np.log(((2 * math.pi * math.e) ** n_obs) * np.linalg.det(posterior_var_mv))
+                prior_log_pdf = self.posterior_log_likelihood(samples=posterior_samples_mv.reshape(-1, n_obs),
+                                                              mean=y_mean.reshape(1, -1), cov_mat=prior_cov)
+                post_log_likelihoods = self.posterior_log_likelihood(samples=posterior_samples_mv.reshape(-1, n_obs),
+                                                                     mean=observations.reshape(1, -1),
+                                                                     cov_mat=error_cov)
+                u_j_d = np.mean(post_log_likelihoods) + np.mean(prior_log_pdf) + IE
+        else:
+            # If the 99% confidence intervals of the prior and posteior multivariate gaussian doesn't overlap in any
+            # dimension, then I cannot calculate RE or IE, so I assign a nan value, so the parameter set is not
+            # considered in the BAL
+            u_j_d = 0.0  # 0 instead of math.nan, since we are maximizing anyways
+
+        # Catch if U_j_d is nan or inf, and replace by 0, since we are maximizing
+        if np.isnan(u_j_d) or u_j_d == -np.inf or u_j_d == np.inf:
+            u_j_d = 0.0
+
+        return u_j_d
+
     def run_al_functions(self, exploit_method, candidates, index, m_error, utility_func):
         """
         Runs the utility function based on the given method.
@@ -748,10 +815,121 @@ class SequentialDesign:
                 # y_std = {key: items[idx] for key, items in std_cand.items()}
                 y_mean = y_cand[idx, :]
                 y_std = std_cand[idx, :]
-                U_J_d[idx] = self.bayesian_active_learning(y_mean=y_mean, y_std=y_std, observations=self.observations,
-                                                           error=m_error, utility_function=utility_func)
+                if utility_func.lower() == "bme" or not self.gaussian_assumption:
+                    U_J_d[idx] = self.bayesian_active_learning(y_mean=y_mean, y_std=y_std,
+                                                               observations=self.observations, error=m_error,
+                                                               utility_function=utility_func)
+                else:
+                    U_J_d[idx] = self.analytical_bal(y_mean=y_mean, y_std=y_std,
+                                                     observations=self.observations, error=m_error,
+                                                     utility_function=utility_func)
 
         return index, U_J_d
+
+    @staticmethod
+    def gaussian_overlap(mu1, cov1, mu2, cov2):
+        """Function to determine if 2 multivariate Gaussian distributions overlap in any dimension.
+        If they overlap in any dimension, then the analytical posterior-based criteria can be estimated. As overlap
+        criteria we arbitrarily selected that, if the 2 distributions overlap anywhere within the 99% confidence
+        intervals, then they do overlap.
+
+        Args:
+            mu1 (np.array [n_dim, ]): array with mean values for distribution 1 (prior)
+            cov1 (np.array [n_dim, n_dim]): diagonal matrix with the variances for distribution 1 (prior)
+            mu2 (np.array [n_dim, ]): array with mean values for distribution 2 (posterior)
+            cov2 (np.array [n_dim, n_dim]): diagonal matrix with the variances for distribution 2 (posterior)
+
+        Returns:
+            bool: True if they overlap, False if they don't.
+        """
+
+        # Calculate the standard deviations for each distribution
+        std_dev1 = np.sqrt(np.diag(cov1))
+        std_dev2 = np.sqrt(np.diag(cov2))
+
+        # Calculate quantiles for the 1% and 99% confidence levels for both distributions
+        quantiles1_left = mu1 - stats.norm.ppf(0.99) * std_dev1
+        quantiles1_right = mu1 + stats.norm.ppf(0.99) * std_dev1
+
+        quantiles2_left = mu2 - stats.norm.ppf(0.99) * std_dev2
+        quantiles2_right = mu2 + stats.norm.ppf(0.99) * std_dev2
+
+        # Check if any dimension overlaps
+        overlap = np.any((quantiles1_right >= quantiles2_left) & (quantiles1_left <= quantiles2_right))
+
+        return overlap
+
+    @staticmethod
+    def multivariate_gaussian_kl_divergence(mu_p, cov_p, mu_q, cov_q):
+        """Function estimates the analytical solution for the Kullback-Leibler divergence when going from the
+        prior (q) to the posterior (p) when oth prior and posteriors are Gaussian distributions.
+
+        Args:
+            mu_p (np.array [n_obs, ]): array with the mean values for the posterior distribution
+            cov_p (np.array [n_obs, n_obs]): diagonal matrix with the variance for the posterior distribution
+            mu_q (np.array [n_obs, ]): array with the mean values for the prior distribution
+            cov_q (np.array [n_obs, n_obs]): diagonal matrix with the variance for the prior distribution distribution
+
+        Returns:
+            float: Kullback-Leibler divergence between prior and posterior
+        """
+        # Dimensionality of the distributions
+        k = len(mu_p)
+
+        # Inverse and determinant of the covariance matrices
+        inv_cov_q = np.linalg.inv(cov_q)
+        det_cov_q = np.linalg.det(cov_q)
+        # inv_cov_p = np.linalg.inv(cov_p)
+        det_cov_p = np.linalg.det(cov_p)
+
+        # Terms in the KL divergence formula
+        term1 = np.trace(inv_cov_q @ cov_p)
+        term2 = (mu_q - mu_p).T @ inv_cov_q @ (mu_q - mu_p)
+        term3 = np.log(det_cov_q / det_cov_p)
+
+        # Calculate the KL divergence
+        kl_divergence = 0.5 * (term1 + term2 - k + term3)
+
+        return kl_divergence
+
+    @staticmethod
+    def posterior_log_likelihood(samples, mean, cov_mat):
+        """Function estimates the log pdf of a Gaussian distribution manually (faster than using stats)
+
+        Args:
+            samples (np.array [mc_exploration, n_obs]): array with samples to get the pdf from
+            mean (np.array [1, n_obs]): mean array of Gaussian distribution
+            cov_mat (np.array [n_obs, n_obs]): covariance of the Gaussian distribution
+
+        Returns:
+            np.array [mc_exploration, ]: array with pdf value of each sample
+        """
+        det_R = np.linalg.det(cov_mat)
+        invR = np.linalg.inv(cov_mat)
+        log_constant = samples.shape[1] * math.log(2 * math.pi) + math.log(det_R)
+
+        # vectorize means:
+        means_vect = mean[:, np.newaxis]  # ############
+
+        # Calculate differences and convert to 4D array (and its transpose):
+        diff = means_vect - samples  # Shape: # means
+        diff_4d = diff[:, :, np.newaxis]
+        transpose_diff_4d = diff_4d.transpose(0, 1, 3, 2)
+
+        # Calculate values inside the exponent
+        inside_1 = np.einsum("abcd, dd->abcd", diff_4d, invR)
+        inside_2 = np.einsum("abcd, abdc->abc", inside_1, transpose_diff_4d)
+        total_inside_exponent = inside_2.transpose(2, 1, 0)
+        total_inside_exponent = np.reshape(total_inside_exponent,
+                                           (total_inside_exponent.shape[1], total_inside_exponent.shape[2]))
+
+        log_likelihood = -0.5 * (log_constant + total_inside_exponent)
+
+        # Convert likelihoods to vector:
+        if log_likelihood.shape[1] == 1:
+            log_likelihood = log_likelihood[:, 0]
+
+        return log_likelihood
 
     def select_indexes(self, prior_samples, collocation_points):
         """
