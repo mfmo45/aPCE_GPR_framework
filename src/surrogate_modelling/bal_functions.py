@@ -496,13 +496,17 @@ class SequentialDesign:
             surrogate model class object, either SklTraining, GPyTraining,  must have a 'self.predict_(input_params)'
             function to evaluate surrogate. It corresponds to the secondary, or error model, which is added to the
             sm_object main surrogate.
+        gaussian_assumption: bool
+            True to assume a Gaussian prior and likelihood, so analytical equations for BAl are used. False to
+            follow the traditional sampling approach.
 
     Attributes:
 
     """
     def __init__(self, exp_design, sm_object, obs, n_cand_groups=4, secondary_sm=None,
                  multiprocessing=True, errors=None,
-                 do_tradeoff=False):
+                 do_tradeoff=False,
+                 gaussian_assumption=False):
 
         self.ExpDesign = exp_design
         self.SM = sm_object
@@ -515,6 +519,7 @@ class SequentialDesign:
         self.parallel = multiprocessing
 
         self.do_tradeoff = do_tradeoff
+        self.gaussian_assumption = gaussian_assumption
 
         self.candidates = None
         self.exploit_score = None        # exploitation score (non-normalized values)
@@ -564,6 +569,9 @@ class SequentialDesign:
                 else:
                     util_fun = 'dkl'
                 stop = 1
+            # for traditional approach, we can't get a posterior logBME
+            if 'post_bme' in util_fun.lower() and not self.gaussian_assumption:
+                util_fun = 'bme'
 
             if self.parallel and self.n_cand_groups > 1:
                 split_cand = np.array_split(all_candidates, self.n_cand_groups, axis=0)
@@ -580,30 +588,26 @@ class SequentialDesign:
                 score_exploit = results[1]
 
             # Normalize exploit score
-            if np.sum(score_exploit) > 0:
-                score_exploit_norm = score_exploit / np.sum(score_exploit)
-                self.exploit_score_norm = score_exploit_norm
-                self.exploit_score = score_exploit
+            score_exploit_norm = score_exploit / np.nansum(np.abs(score_exploit))
+            self.exploit_score_norm = score_exploit_norm
+            self.exploit_score = score_exploit
 
-                if self.do_tradeoff:
-                    # assigning 50-50 score to exploitation and exploration
-                    total_score = (0.5*score_exploration) + (0.5*score_exploit_norm)
-                    self.total_score = total_score
-                else:
-                    total_score = score_exploit_norm
-                    self.total_score = score_exploit
-
-            else:
-                self.exploit_score_norm = np.zeros(self.mc_samples)
-                self.exploit_score = np.zeros(self.mc_samples)
-
-                total_score = score_exploration
+            if self.do_tradeoff:
+                # assigning 50-50 score to exploitation and exploration
+                total_score = (0.5 * score_exploration) + (0.5 * score_exploit_norm)
                 self.total_score = total_score
+            else:
+                total_score = score_exploit_norm
+                self.total_score = score_exploit
+
+            if np.nansum(score_exploit) == 0:
                 util_fun = 'global_mc'
 
             # Order in descending order
             temp = total_score.copy()  # copy
             temp[np.isnan(total_score)] = -np.inf  # make all nan entries -inf
+            if 'ie' in util_fun.lower():                         # To maximize -IE
+                temp = [val if val != 0 else -np.inf for val in temp]
             sorted_idx = np.argsort(temp)[::-1]  # order from largest to smallest
 
             # Select new TP(s)
