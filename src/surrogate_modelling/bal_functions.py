@@ -504,7 +504,8 @@ class SequentialDesign:
 
     """
     def __init__(self, exp_design, sm_object, obs, n_cand_groups=4, secondary_sm=None,
-                 multiprocessing=True, errors=None,
+                 parallel=True, n_jobs=-2,
+                 errors=None,
                  do_tradeoff=False,
                  gaussian_assumption=False):
 
@@ -516,7 +517,8 @@ class SequentialDesign:
         self.m_error = errors
 
         self.n_cand_groups = n_cand_groups
-        self.parallel = multiprocessing
+        self.parallel = parallel
+        self.n_jobs = n_jobs
 
         self.do_tradeoff = do_tradeoff
         self.gaussian_assumption = gaussian_assumption
@@ -584,7 +586,7 @@ class SequentialDesign:
 
             if self.parallel and self.n_cand_groups > 1:
                 split_cand = np.array_split(all_candidates, self.n_cand_groups, axis=0)
-                results = Parallel(n_jobs=-1, backend='multiprocessing')(
+                results = Parallel(n_jobs=self.n_jobs, backend='threading')(
                     delayed(self.run_al_functions)(exploit_method, split_cand[i], i,
                                                    self.m_error, util_fun)
                     for i in range(self.n_cand_groups))

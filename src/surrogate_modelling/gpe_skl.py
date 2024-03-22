@@ -124,7 +124,7 @@ class SklTraining(MyGeneralGPR):
     """
     def __init__(self, collocation_points, model_evaluations,  kernel,
                  alpha, n_restarts, noise=True, y_normalization=True, tp_normalization=False,
-                 optimizer="fmin_l_bfgs_b", parallelize=False):
+                 optimizer="fmin_l_bfgs_b", parallelize=False, n_jobs=-2):
 
         super(SklTraining, self).__init__(collocation_points=collocation_points, model_evaluations=model_evaluations)
 
@@ -135,6 +135,7 @@ class SklTraining(MyGeneralGPR):
         self.noise = noise
 
         self.parallel = parallelize
+        self.n_jobs = n_jobs
 
         # Options for GPR library:
         self.tp_norm = tp_normalization
@@ -185,7 +186,7 @@ class SklTraining(MyGeneralGPR):
             #                                                                         self.kernel[i],
             #                                                                         self.alpha[i])
             #                                                      for i in range(self.n_obs))
-            out = Parallel(n_jobs=-1, backend='threading')(delayed(self._fit)(self.training_points,
+            out = Parallel(n_jobs=self.n_jobs, backend='threading')(delayed(self._fit)(self.training_points,
                                                                               self.model_evaluations[:, i],
                                                                               self.kernel[i],
                                                                               self.alpha[:, i])
