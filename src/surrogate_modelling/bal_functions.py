@@ -211,7 +211,7 @@ class BayesianInference:
         invR = np.linalg.inv(self.augmented_cov)
         # Can't ignore constant
         const_mvn = pow(2 * math.pi, - self.observations.shape[1] / 2) * (1 / np.sqrt(det_R)).reshape(-1, 1)
-        log_constant = self.observations.shape[1] * math.log(2 * math.pi) + math.log(det_R)
+        log_constant = self.observations.shape[1] * math.log(2 * math.pi) + np.log(det_R.reshape(-1, 1))
 
         # vectorize means:
         means_vect = self.observations[:, np.newaxis]  # ############
