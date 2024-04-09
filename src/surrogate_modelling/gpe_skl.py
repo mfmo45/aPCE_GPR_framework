@@ -13,7 +13,7 @@ import math
 import sklearn
 import scipy
 from sklearn.utils.optimize import _check_optimize_result
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import sklearn.gaussian_process.kernels
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF
@@ -123,7 +123,9 @@ class SklTraining(MyGeneralGPR):
      the gpe predictions from it. These are the ones that will be used in BAL.
     """
     def __init__(self, collocation_points, model_evaluations,  kernel,
-                 alpha, n_restarts, noise=True, y_normalization=True, tp_normalization=False,
+                 alpha, n_restarts, noise=True,
+                 y_normalization=True, y_log=False,
+                 tp_normalization=False,
                  optimizer="fmin_l_bfgs_b", parallelize=False, n_jobs=-2):
 
         super(SklTraining, self).__init__(collocation_points=collocation_points, model_evaluations=model_evaluations)
@@ -131,6 +133,7 @@ class SklTraining(MyGeneralGPR):
         # Input for GPR library in sklearn:
         self.n_restart = n_restarts
         self.y_normalization_ = y_normalization
+        self.y_log = y_log
         self.optimizer_ = optimizer
         self.noise = noise
 
@@ -220,8 +223,12 @@ class SklTraining(MyGeneralGPR):
         gp = MySklGPR(kernel=kernel, alpha=alpha, normalize_y=self.y_normalization_,
                       n_restarts_optimizer=self.n_restart, optimizer=self.optimizer_)
 
+        if self.y_log:
+            model_y = np.log(model_y)
+
         if self.tp_norm:  # Normalize the training points (if the scales are very different)
-            scaler_x_train = MinMaxScaler()
+            # scaler_x_train = MinMaxScaler()
+            scaler_x_train = StandardScaler()
             scaler_x_train.fit(self.training_points)
             collocation_points_scaled = scaler_x_train.transform(self.training_points)
 
@@ -290,6 +297,9 @@ class SklTraining(MyGeneralGPR):
                 upper_ci[:, i] = surrogate_prediction[:, i] + (1.96 * surrogate_std[:, i])
 
         output_dic = dict()
+        # if self.y_log:
+        #     surrogate_prediction = np.exp(surrogate_prediction)
+        #     surrogate_std = # TODO
         output_dic['output'] = surrogate_prediction
         output_dic['std'] = surrogate_std
         if get_conf_int:
