@@ -681,6 +681,8 @@ class aPCE:
         if reg_method.lower() == 'ols':
             # ordinary least squares method: equivalent to (scipy.linalg.pinv(np.dot(psi.T, psi)).dot(psi.T)).dot(y)
             clf_poly = lm.LinearRegression(fit_intercept=False)
+        if reg_method.lower() == 'nnls':
+            clf_poly = lm.LinearRegression(positive=True, fit_intercept=False)
         elif reg_method.lower() == 'rr':
             # ridge regression: L2 regularization
             clf_poly = lm.Ridge(alpha=1)
@@ -728,6 +730,11 @@ class aPCE:
         #     clf_poly = EBLinearRegression(optimizer='em')
 
         # Fit
+        # psi_new = np.dot(psi.T, psi) + np.diag(np.ones(psi.shape[1])*5)
+        # y_new = np.dot(psi.T, y)
+        #
+        # clf_poly.fit(psi_new, y_new)
+
         clf_poly.fit(psi, y)
 
         # Select the nonzero entries of coefficients (make sparse)
