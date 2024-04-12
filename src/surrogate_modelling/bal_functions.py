@@ -533,6 +533,16 @@ class SequentialDesign:
         self.mc_samples = 1000  # Number of parameter sets to sample and explore
         self.mc_exploration = 10_000   # number of output sets to sample during posterior exploration
 
+        self.check_inputs()
+
+    def check_inputs(self):
+        if self.observations.ndim != 1:
+            self.observations = self.observations.reshape(-1)
+            print(f'The observations input was changed to a 1D vector with size {self.observations.shape}')
+        if self.m_error.ndim != 1:
+            self.m_error = self.m_error.reshape(-1)
+            print(f'The error input was changed to a 1D vector with size {self.m_error.shape}')
+
     def run_sequential_design(self, prior_samples=None):
 
         exp_design = self.ExpDesign
