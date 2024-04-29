@@ -782,11 +782,13 @@ class SequentialDesign:
             # If the 99% confidence intervals of the prior and posteior multivariate gaussian doesn't overlap in any
             # dimension, then I cannot calculate RE or IE, so I assign a nan value, so the parameter set is not
             # considered in the BAL
-            u_j_d = 0.0  # 0 instead of math.nan, since we are maximizing anyways
+            u_j_d = np.nan  # Used nan instead of 0, so if log-based criteria are negative, 0 can be the best case
+                            # or in minimization problems, 0 will always be chosen.
 
         # Catch if U_j_d is nan or inf, and replace by 0, since we are maximizing
         if np.isnan(u_j_d) or u_j_d == -np.inf or u_j_d == np.inf:
-            u_j_d = 0.0
+            u_j_d = np.nan  # Used nan instead of 0, so if log-based criteria are negative, 0 can be the best case
+                            # or in minimization problems, 0 will always be chosen.
 
         return u_j_d
 
