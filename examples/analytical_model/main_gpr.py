@@ -42,36 +42,31 @@ if __name__ == '__main__':
     # =============   INPUT DATA  ================
     # =====================================================
     # paths ..........................................................................
-    results_path = Path('Results')
+    results_path = Path('Results')  # Folder where to save results
 
     # surrogate data .................................................................
-    parallelize = False   # to parallelize training, BAL
+    parallelize = False   # to parallelize surrogate training, BAL
     # gpr_data
-    gp_library = 'gpy'    # gpy: GPyTorch or skl: Scikit-Learn
+    gp_library = 'skl'    # gpy: GPyTorch or skl: Scikit-Learn
 
-    # pce data
-    degree = 10     # max (and only) polynomial degree to consider
-
-
-    # =====================================================
-    # =============   COMPUTATIONAL MODEL  ================
-    # =====================================================
+    # ===============================================
+    # ============= COMPUTATIONAL MODEL: ============
+    # ===============================================
     input_data_path = None
 
-    n_loc = 10
-    ndim = 2
-    output_names = ['Z']
+    n_loc = 10   # number of output locations (Number of surrogates to train)
+    ndim = 2     # number of parameters
+    output_names = ['Z']    # Name for the different type of output types (here only 1)
 
     pt_loc = np.arange(0, n_loc, 1.) / (n_loc - 1)
     # pt_loc = np.array([0.1111])
 
-    # True data .......................................
+    # Synthetic true data .......................................
     obs = np.full((1, n_loc), [2.])  # observation values, for each loc
-    error_pp = np.repeat([2. ** 2], n_loc)
+    error_pp = np.repeat([2. ], n_loc)
 
     # Reference data:
     """Normally the reference data would be read from a file and imported here"""
-
 
     # =====================================================
     # =============   EXPERIMENT DESIGN  ================
@@ -81,16 +76,17 @@ if __name__ == '__main__':
     # Define the uncertain parameters with their mean and standard deviation
     Inputs = Input()
 
+    # One "Marginal" for each parameter.
     for i in range(ndim):
-        Inputs.add_marginals()
-        Inputs.Marginals[i].name = "$\\theta_{" + str(i + 1) + "}$"
-        Inputs.Marginals[i].dist_type = 'uniform'
-        Inputs.Marginals[i].parameters = [-5, 5]
+        Inputs.add_marginals()   # Create marginal for parameter "i"
+        Inputs.Marginals[i].name = "$\\theta_{" + str(i + 1) + "}$"    # Parameter name
+        Inputs.Marginals[i].dist_type = 'uniform'    # Parameter distribution (see exp_design.py --> build_dist()
+        Inputs.Marginals[i].parameters = [-5, 5]                       # Inputs needed for districution
 
     # Experimental design: ....................................................................
 
     exp_design = ExpDesign(input_object=Inputs,
-                           exploit_method='space_filling',  # bal, space_filling, sobol
+                           exploit_method='bal',  # bal, space_filling, sobol
                            explore_method='random',  # method to sample from parameter set for active learning
                            training_step=1,  # No. of training points to sample in each iteration
                            sampling_method='sobol',  # how to sample the initial training points
@@ -98,7 +94,7 @@ if __name__ == '__main__':
                            n_initial_tp=5,  # Number of initial training points (min = n_trunc*2)
                            n_max_tp=25,  # max number of tp to use
                            training_method='sequential',  # normal (train only once) or sequential (Active Learning)
-                           util_func='global_mc',  # criteria for bal (dkl, bme, ie, dkl_bme) or SF (default: global_mc)
+                           util_func='dkl',  # criteria for bal (dkl, bme, ie, dkl_bme) or SF (default: global_mc)
                            eval_step=10,  # every how many iterations to evaluate the surrogate
                            secondary_meta_model=False   # only gpr is available
                            )
@@ -107,21 +103,23 @@ if __name__ == '__main__':
 
     # setup surrogate model data:
     if exp_design.main_meta_model == 'gpr':
-        exp_design.setup_gpe(library='gpy'     # set gpy or skl as libraries
+        exp_design.setup_gpe(library='skl'     # set gpy or skl as libraries
                              )
     print(
         f'<<< Will run <{exp_design.n_iter + 1}> GP training iterations and <{exp_design.n_evals}> GP evaluations. >>>')
-
 
     # =====================================================
     # =============   COLLOCATION POINTS  ================
     # =====================================================
 
     # Collocation points ...................................................
+    # This part is specific to the problem: here you add the functions to create input sets and evaluate the model/read
+    # already-run model runs.
     collocation_points = exp_design.generate_samples(n_samples=exp_design.n_init_tp,
                                                      sampling_method=exp_design.sampling_method)
     model_evaluations = nonlinear_model(params=collocation_points, loc=pt_loc)
-
+    """Note: The collocation points and model evaluations should be in numpy-array form, and in the order needed by 
+    the gpe_skl.py or gpe_gpytorh.py classes"""
 
     # =====================================================
     # =============   Validation points  ================
@@ -153,19 +151,18 @@ if __name__ == '__main__':
     # =====================================================
     # =============   INITIALIZATION  ================
     # =====================================================
-
+    """This part can be ommited, if the files can be saved directly in the results_path folder"""
     # Create folder for specific case ....................................................................
     results_folder = results_path / f'ndim_{ndim}_nout_{n_loc}'
     if not results_folder.exists():
         logger.info(f'Creating folder {results_folder}')
         Path.mkdir(results_folder)
 
-    # Create a folder for the exploration method:
+    # Create a folder for the exploration method: needed only if BAL is to be used
     results_folder = results_folder / f'{exp_design.exploit_method}_{exp_design.util_func}'
     if not results_folder.exists():
         logger.info(f'Creating folder {results_folder}')
         Path.mkdir(results_folder)
-
 
     # Arrays to save results ---------------------------------------------------------------------------- #
 
@@ -181,7 +178,7 @@ if __name__ == '__main__':
     eval_dict = {}
 
     # ========================================================================================================= #
-
+    exploration_set = exp_design.generate_samples(n_samples=2000)  # for BAL
     # =====================================================
     # =============   SURROGATE MODEL TRAINING  ===========
     # =====================================================
@@ -197,11 +194,11 @@ if __name__ == '__main__':
             # 1.1. Set up the kernel
             kernel = 1 * RBF(length_scale=exp_design.kernel_data['length_scale'],
                              length_scale_bounds=exp_design.kernel_data['bounds'])
-            # 1.2. Setup a PCE
+            # 1.2. Setup a GPR: initialize the general SKL class
             sm = SklTraining(collocation_points=collocation_points, model_evaluations=model_evaluations,
                              noise=True,
                              kernel=kernel,
-                             alpha=0.0002,
+                             alpha=1e-6,
                              n_restarts=10,
                              parallelize=parallelize)
 
@@ -222,16 +219,19 @@ if __name__ == '__main__':
                              optimizer="adam",
                              verbose=False)
 
+        # Train the GPR
         sm.train_()
 
         # 2. Validate GPR
         if it % exp_design.eval_step == 0:
-
+            # Evaluate surrogates
             valid_sm = sm.predict_(input_sets=exp_design.val_x, get_conf_int=True)
 
+            # Get validation criteria
             rmse_sm, run_valid = validation_error(true_y=exp_design.val_y, sim_y=valid_sm,
                                                   n_per_type=n_loc, output_names=output_names)
 
+            # Save the results to a dictionary
             eval_dict = save_valid_criteria(new_dict=run_valid, old_dict=eval_dict,
                                             n_tp=collocation_points.shape[0])
 
@@ -244,7 +244,6 @@ if __name__ == '__main__':
             save_name = results_folder / f'Validation_{exp_design.gpr_lib}_{exp_design.exploit_method}.pickle'
             pickle.dump(eval_dict, open(save_name, "wb"))
 
-
         # 3. Compute Bayesian scores in parameter space ----------------------------------------------------------
         surrogate_output = sm.predict_(input_sets=prior, get_conf_int=True)
 
@@ -255,8 +254,7 @@ if __name__ == '__main__':
         bayesian_dict['N_tp'][it] = collocation_points.shape[0]
         bayesian_dict['BME'][it], bayesian_dict['RE'][it] = bi_gpe.BME, bi_gpe.RE
         bayesian_dict['ELPD'][it], bayesian_dict['IE'][it] = bi_gpe.ELPD, bi_gpe.IE
-        bayesian_dict['post_size'][it] = bi_gpe.post_likelihood.shape[0]
-
+        bayesian_dict['post_size'][it] = bi_gpe.posterior_output.shape[0]
 
         # 4. Sequential Design --------------------------------------------------------------------------------------
         if it < exp_design.n_iter:
@@ -264,14 +262,16 @@ if __name__ == '__main__':
             SD = SequentialDesign(exp_design=exp_design, sm_object=sm, obs=obs, errors=error_pp**2,
                                   do_tradeoff=False, multiprocessing=parallelize)
 
-            # SD.run_sequential_design(prior_samples=prior_samples)
-            new_tp, util_fun = SD.run_sequential_design()
+            # new_tp, util_fun = SD.run_sequential_design(prior_samples=prior_samples)
+            SD.gaussian_assumption = True
+            new_tp, util_fun = SD.run_sequential_design(prior_samples=exploration_set)
 
             bayesian_dict[f'{exp_design.exploit_method}_{exp_design.util_func}'][it] = SD.selected_criteria[0]
             bayesian_dict['util_func'][it] = util_fun
 
-            # Evaluate model in new TP:
+            # Evaluate model in new TP: This is specific to each problem --------
             new_output = nonlinear_model(params=new_tp, loc=pt_loc)
+            # -------------------------------------------------------------------
 
             # Update collocation points:
             if exp_design.exploit_method == 'sobol':
@@ -332,9 +332,8 @@ if __name__ == '__main__':
 
     plot_validation_tp(eval_dict_list=[eval_dict], label_list=[''],
                        output_names=output_names, n_loc=n_loc,
-                       criteria=['mse', 'nse', 'mean_error', 'std_error'], plot_loc=True,
+                       criteria=['mse', 'nse', 'r2', 'mean_error', 'std_error'], plot_loc=True,
                        fig_title='Validation criteria for increasing number of TP')
-
 
     # # Plot Bayesian criteria
     # plot_gpe_scores(bayesian_dict['BME'], bayesian_dict['RE'], exp_design.n_init_tp,
