@@ -503,7 +503,9 @@ class SequentialDesign:
     Attributes:
 
     """
-    def __init__(self, exp_design, sm_object, obs, n_cand_groups=4, secondary_sm=None,
+    def __init__(self, exp_design, sm_object, obs,
+                 n_candidates=1000, n_cand_groups=4,
+                 secondary_sm=None,
                  parallel=True, n_jobs=-2,
                  errors=None,
                  do_tradeoff=False,
@@ -530,7 +532,7 @@ class SequentialDesign:
         self.total_score = None          # Total score, either weighted sum of both norm score
         self.selected_criteria = None    # value(s) of selected TP(s) utility function
 
-        self.mc_samples = 1000  # Number of parameter sets to sample and explore
+        self.mc_samples = n_candidates  # Number of parameter sets to sample and explore
         self.mc_exploration = 10_000   # number of output sets to sample during posterior exploration
 
         self.check_inputs()
