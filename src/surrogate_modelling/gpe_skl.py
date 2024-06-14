@@ -19,8 +19,6 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF
 import copy
 from joblib import Parallel, delayed
-import torch
-import gpytorch
 from pathlib import Path
 
 
