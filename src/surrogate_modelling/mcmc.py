@@ -228,6 +228,75 @@ class MCMC:
 
         return Posterior_df
 
+    def read_mcmc_data(self, filename):
+        """Read the already-run mcmc chains
+
+        Args:
+            filename (Path): file name (with .h5 extension) where the backend was saved
+
+        Returns:
+            _type_: _description_
+        """
+
+        # Read backend:
+        backend = emcee.backends.HDFBackend(filename)
+        self.backend = backend
+
+        # Extract info from backend:
+        nwalkers, ndim = backend.shape
+
+        if nwalkers != self.mcmc_params['n_walkers']:
+            print('There is an error in the input data. The number of walkers does not coincide')
+
+        if ndim != len(self.exp_design.Inputs.Marginals):
+            print('There is an error in the input data. The input dimension does not coincide')
+
+        # Create and save sampler
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, self.log_posterior,
+                                        self.mcmc_params['moves'],
+                                        backend=backend, vectorize=True)
+
+        self.sampler = sampler
+
+        # Posterior diagnostics
+        try:
+            tau = sampler.get_autocorr_time(tol=0)
+        except emcee.autocorr.AutocorrError:
+            tau = 5
+
+        if all(np.isnan(tau)):
+            tau = 5
+
+        burnin = int(2 * np.nanmax(tau))
+        thin = int(0.5 * np.nanmin(tau)) if int(0.5 * np.nanmin(tau)) != 0 else 1
+        finalsamples = sampler.get_chain(discard=burnin, flat=True, thin=thin)
+        acc_fr = np.nanmean(sampler.acceptance_fraction)
+        list_gr = np.round(self.gelman_rubin(sampler.chain[:, burnin:]), 3)
+
+        # Print summary
+        print('\n')
+        print('-' * 15 + 'Posterior diagnostics' + '-' * 15)
+        print(f"Mean auto-correlation time: {np.nanmean(tau):.3f}")
+        print(f"Thin: {thin}")
+        print(f"Burn-in: {burnin}")
+        print(f"Flat chain shape: {finalsamples.shape}")
+        print(f"Mean acceptance fraction*: {acc_fr:.3f}")
+        print("Gelman-Rubin Test**: ", list_gr)
+
+        print("\n* This value must lay between 0.234 and 0.5.")
+        print("** These values must be smaller than 1.1.")
+        print('-' * 50)
+
+        print(f"\n>>>> Bayesian inference with MCMC  "
+              "was succesfully read. <<<<<<\n")
+
+        # Save and return
+        self.sampler = sampler
+        self.finalsamples = finalsamples
+        Posterior_df = pd.DataFrame(finalsamples)
+
+        return Posterior_df
+
     def log_posterior(self, samples):
         """
         Calls the functions to estimate the log likliehood and log prior for each input sample, and returns the sum
