@@ -10,6 +10,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
 import multiprocessing
 import scipy
+import  math
 
 
 class MCMC:
@@ -18,7 +19,9 @@ class MCMC:
                  mcmc_opts,
                  include_error=False,
                  init_samples=None,
-                 output_dir='mcmc_', n_cpus=None):
+                 output_dir='mcmc_',
+                 save_name='emcee_sampler',
+                 n_cpus=None):
 
         self.observations = observations
         self.var = error_var
@@ -30,11 +33,13 @@ class MCMC:
         self.exp_design = exp_design
 
         self.mcmc_params = mcmc_opts
+
         self.n_cpus = n_cpus
 
         self.include_error = include_error
 
         self.output_dir = output_dir
+        self.save_name = save_name
 
     def run_sampler(self):
 
@@ -48,7 +53,7 @@ class MCMC:
         self.initsamples = None
         self.nwalkers = 100
         self.nburn = 300
-        self.nsteps = 100000
+        self.nsteps = 100_000
         self.moves = None
 
         self.mp = False
@@ -78,20 +83,23 @@ class MCMC:
         # Extract verbose
         if 'verbose' in self.mcmc_params:
             self.verbose = self.mcmc_params['verbose']
+        if 'nburn' in self.mcmc_params:
+            self.nburn = self.mcmc_params['nburn']
 
         # Set initial samples: randomly
-        init_samples = self.exp_design.generate_samples(n_samples=self.nwalkers)
+        init_samples = self.exp_design.generate_samples(n_samples=self.nwalkers, sampling_method='sobol')
 
         print("\n>>>> Bayesian inference with MCMC sarted <<<<<<")
         #   f"{self.BayesOpts.name} started. <<<<<<")
 
         # Set up the backend
-        filename = f"{self.output_dir}/emcee_sampler.h5"
+        filename = f"{self.output_dir}/{self.save_name}.h5"
+        print(f'Filename: {filename}')
         backend = emcee.backends.HDFBackend(filename)
         # Clear the backend in case the file already exists
         backend.reset(self.nwalkers, ndim)
 
-        if self.mp:   # For Multiprocessing
+        if self.mp:   # For Multiprocessing # ToDo: Check how MP is working
             if self.n_cpus is None:
                 n_cpus = multiprocessing.cpu_count()
             else:
@@ -194,7 +202,7 @@ class MCMC:
         thin = int(0.5 * np.nanmin(tau)) if int(0.5 * np.nanmin(tau)) != 0 else 1
         finalsamples = sampler.get_chain(discard=burnin, flat=True, thin=thin)
         acc_fr = np.nanmean(sampler.acceptance_fraction)
-        # list_gr = np.round(self.gelman_rubin(sampler.chain[:, burnin:]), 3)
+        list_gr = np.round(self.gelman_rubin(sampler.chain[:, burnin:]), 3)
 
         # Print summary
         print('\n')
@@ -400,3 +408,13 @@ class MCMC:
             # within chain variance
             R_hat = np.sqrt(var_θ / W)
             return R_hat
+
+    def callback_fn(self, state):
+        samples = state.coords
+        accepted = state.accepted
+        acceptance_fractions = accepted / (state.iteration + 1)
+        for i in range(len(samples)):
+            print(f"Iteration {state.iteration}: Walker {i} - "
+                  f"Sample {samples[i]} - "
+                  f"{'Accepted' if accepted[i] else 'Rejected'} - "
+                  f"Acceptance Fraction {acceptance_fractions[i]:.3f}")
