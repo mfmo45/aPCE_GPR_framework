@@ -539,7 +539,7 @@ class aPCE:
         return psi
     # ------------------------------------------------------------------------------------------------------ #
 
-    def train(self, initial_reg_method=None):
+    def train_(self, initial_reg_method=None):
         if self.var_cutoff == 0:
             self._train_normal()
         else:
@@ -791,6 +791,9 @@ class aPCE:
                 score, LCerror = self.corr_loocv_error(clf=clf_poly, psi=psi, coeffs=sparse_coeffs_with_zeros, y=y)
 
         # Create a dict to pass the needed outputs (always send the sparse-results, even if no sparsity is used)
+        clf_poly.coef_ = sparse_coeffs
+        basis_indices = sparse_basis_indices
+
         return_out_dict = dict()
         return_out_dict['clf_poly'] = clf_poly
         # return_out_dict['Multi-Index'] = basis_indices
@@ -806,6 +809,20 @@ class aPCE:
         return_out_dict['loocv_score'] = score
         return_out_dict['loocv_errors'] = LCerror
 
+        # return_out_dict = dict()
+        # return_out_dict['clf_poly'] = clf_poly
+        # return_out_dict['Multi-Index'] = basis_indices
+        # # return_out_dict['Multi-Index'] = sparse_basis_indices
+        # # return_out_dict['coeffs'] = sparse_coeffs_with_zeros
+        # return_out_dict['coeffs'] = sparse_coeffs
+        #
+        # return_out_dict['sparseMulti-Index'] = sparse_basis_indices
+        # return_out_dict['sparsePsi'] = sparse_psi
+        #
+        # return_out_dict['sparse_coeffs'] = sparse_coeffs
+        # return_out_dict['full_coeffs'] = original_coeffs
+        # return_out_dict['loocv_score'] = score
+        # return_out_dict['loocv_errors'] = LCerror
         return return_out_dict
 
     # ----------------------------------------------------------------------------------------------------- #
@@ -851,9 +868,10 @@ class aPCE:
                 sm_predictions[:, Idx], sm_std[:, Idx] = obj['clf_poly'].predict(psi_predict, return_std=True)
             except:
                 try:
+                    # print(f"For {obj['clf_poly']}, no std estimation")
                     sm_predictions[:, Idx] = obj['clf_poly'].predict(psi_predict)
                 except:
-                    print('An exception occurred, prediction is estimated manually')
+                    # print('An exception occurred, prediction is estimated manually')
                     sm_predictions[:, Idx] = np.dot(psi_predict, obj['coeffs'])
                 get_conf_int = False
 
