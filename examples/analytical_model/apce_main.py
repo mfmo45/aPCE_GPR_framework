@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     input_data_path = None
 
-    n_loc = 10  # number of output locations
+    n_loc = 2  # number of output locations
     ndim = 3  # number of parameters
     output_names = ['Z']  # output names
 
@@ -72,7 +72,6 @@ if __name__ == '__main__':
 
     # Reference data:
     """Normally the reference data would be read from a file and imported here"""
-
 
     # =====================================================
     # =============   EXPERIMENT DESIGN  ================
@@ -186,7 +185,7 @@ if __name__ == '__main__':
         sm = aPCE(collocation_points=collocation_points, model_evaluations=model_evaluations,
                   pce_config=pce_config,
                   sparsity=True,
-                  variance_cutoff=0.8,
+                  variance_cutoff=0,
                   pce_reg_method=pce_optimizer)
 
         sm.train(initial_reg_method='BRR')
@@ -208,7 +207,7 @@ if __name__ == '__main__':
         # 2. Validate GPR
         if it % exp_design.eval_step == 0 or it == exp_design.n_iter:
 
-            valid_sm = sm.predict_(input_samples=exp_design.val_x, get_conf_int=True)
+            valid_sm = sm.predict_(input_sets=exp_design.val_x, get_conf_int=True)
             if exp_design.secondary_model:
                 valid_em = em.predict_(exp_design.val_x, get_conf_int=False)
                 valid_sm['output'] = valid_sm['output'] + valid_em['output']
