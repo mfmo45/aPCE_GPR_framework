@@ -16,7 +16,8 @@ import  math
 class MCMC:
     def __init__(self, observations, error_var,
                  exp_design, surrogate_object,
-                 mcmc_opts,
+                 secondary_surrogate=None,
+                 mcmc_opts={},
                  include_error=False,
                  init_samples=None,
                  output_dir='mcmc_',
@@ -31,6 +32,7 @@ class MCMC:
 
         self.sm = surrogate_object
         self.exp_design = exp_design
+        self.error_sm = secondary_surrogate
 
         self.mcmc_params = mcmc_opts
 
@@ -297,6 +299,174 @@ class MCMC:
 
         return Posterior_df
 
+    def continue_mcmc(self, filename):
+        """
+        Continues an existing emcee process, saved previously in the .h5 file "filename"
+        Args:
+            filename: Path() with the .h5 file were the previously run EMCEE process was saved
+
+        Returns:
+
+        """
+        ndim = len(self.exp_design.Inputs.Marginals)
+
+        output_dir = f'{self.output_dir}'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        # Set MCMC parameters:
+        self.initsamples = None
+        self.nwalkers = 100
+        self.nburn = 300
+        self.nsteps = 100_000
+        self.moves = None
+
+        self.mp = False
+        self.verbose = False
+
+        # Not yet used:
+        # self.move_name = 'stretch'
+        # scale = 1
+
+        # Read from mcmc_opts:
+        # Extract number of steps per walker
+        if 'n_steps' in self.mcmc_params:
+            self.nsteps = int(self.mcmc_params['n_steps'])
+        # Extract number of walkers (chains)
+        if 'n_walkers' in self.mcmc_params:
+            self.nwalkers = int(self.mcmc_params['n_walkers'])
+        # Extract moves
+        if 'moves' in self.mcmc_params:
+            self.moves = self.mcmc_params['moves']
+        if 'move_name' in self.mcmc_params:
+            self.move_name = self.mcmc_params['move_name']
+        if 'scale' in self.mcmc_params:
+            scale = self.mcmc_params['scale']
+        # Extract multiprocessing
+        if 'multiprocessing' in self.mcmc_params:
+            self.mp = self.mcmc_params['multiprocessing']
+        # Extract verbose
+        if 'verbose' in self.mcmc_params:
+            self.verbose = self.mcmc_params['verbose']
+        if 'nburn' in self.mcmc_params:
+            self.nburn = self.mcmc_params['nburn']
+
+        # Set up the backend
+        print(f'Filename: {filename}')
+        backend = emcee.backends.HDFBackend(filename)
+        # Clear the backend in case the file already exists
+
+        new_steps = self.nsteps - backend.iteration
+        last_sample = backend.get_last_sample()
+        last_pos = last_sample.coords if last_sample is not None else None
+
+        if self.mp:  # For Multiprocessing # ToDo: Check how MP is working
+            if self.n_cpus is None:
+                n_cpus = multiprocessing.cpu_count()
+            else:
+                n_cpus = self.n_cpus
+
+            with multiprocessing.Pool(n_cpus) as pool:
+                sampler = emcee.EnsembleSampler(
+                    self.nwalkers, ndim, self.log_posterior, moves=self.moves,
+                    pool=pool, backend=backend
+                )
+
+                # Production run
+                print("\n Production run is starting:")
+                pos, prob, state = sampler.run_mcmc(
+                    None, new_steps, progress=True
+                )
+        else:
+            # Run in series and monitor the convergence
+            sampler = emcee.EnsembleSampler(self.nwalkers, ndim, self.log_posterior,
+                                            moves=self.moves,
+                                            backend=backend, vectorize=True)
+
+            print(f"\n Production run is continnuin from {backend.iteration} to {self.nsteps}:")
+            # Track how the average autocorrelation time estimate changes
+            autocorrIdx = 0
+            autocorr = np.empty(self.nsteps)
+            tauold = np.inf
+            autocorreverynsteps = 50
+            adapteverynsteps = 50
+
+            # sample step by step using the generator sampler.sample
+            for sample in sampler.sample(last_pos,
+                                         iterations=new_steps,
+                                         tune=True,
+                                         progress=True):
+
+                # only check convergence every autocorreverynsteps steps
+                if sampler.iteration % autocorreverynsteps:
+                    continue
+
+                if self.verbose:
+                    print("\nStep: {}".format(sampler.iteration))
+                    acc_fr = np.mean(sampler.acceptance_fraction)
+                    print(f"Mean acceptance fraction: {acc_fr:.3f}")
+
+                # compute the autocorrelation time so far using tol=0 means that we'll always get an estimate even if
+                # it isn't trustworthy
+                tau = sampler.get_autocorr_time(tol=0)
+                # average over walkers
+                autocorr[autocorrIdx] = np.nanmean(tau)
+                autocorrIdx += 1
+                # output current autocorrelation estimate
+                if self.verbose:
+                    print(f"Mean autocorr. time estimate: {np.nanmean(tau):.3f}")
+                    list_gr = np.round(self.gelman_rubin(sampler.chain), 3)
+                    print("Gelman-Rubin Test*: ", list_gr)
+
+                # check convergence
+                converged = np.all(tau * autocorreverynsteps < sampler.iteration)
+                converged &= np.all(np.abs(tauold - tau) / tau < 0.01)
+                converged &= np.all(self.gelman_rubin(sampler.chain) < 1.1)
+
+                if converged:
+                    print('converged')
+                    break
+                tauold = tau
+
+        # Posterior diagnostics
+        try:
+            tau = sampler.get_autocorr_time(tol=0)
+        except emcee.autocorr.AutocorrError:
+            tau = 5
+
+        if all(np.isnan(tau)):
+            tau = 5
+
+        burnin = int(2 * np.nanmax(tau))
+        thin = int(0.5 * np.nanmin(tau)) if int(0.5 * np.nanmin(tau)) != 0 else 1
+        finalsamples = sampler.get_chain(discard=burnin, flat=True, thin=thin)
+        acc_fr = np.nanmean(sampler.acceptance_fraction)
+        list_gr = np.round(self.gelman_rubin(sampler.chain[:, burnin:]), 3)
+
+        # Print summary
+        print('\n')
+        print('-' * 15 + 'Posterior diagnostics' + '-' * 15)
+        print(f"Mean auto-correlation time: {np.nanmean(tau):.3f}")
+        print(f"Thin: {thin}")
+        print(f"Burn-in: {burnin}")
+        print(f"Flat chain shape: {finalsamples.shape}")
+        print(f"Mean acceptance fraction*: {acc_fr:.3f}")
+        print("Gelman-Rubin Test**: ", list_gr)
+
+        print("\n* This value must lay between 0.234 and 0.5.")
+        print("** These values must be smaller than 1.1.")
+        print('-' * 50)
+
+        print(f"\n>>>> Bayesian inference with MCMC  "
+              "successfully completed. <<<<<<\n")
+
+        # Save and return
+        self.sampler = sampler
+        self.finalsamples = finalsamples
+        Posterior_df = pd.DataFrame(finalsamples)
+
+        return Posterior_df
+
     def log_posterior(self, samples):
         """
         Calls the functions to estimate the log likliehood and log prior for each input sample, and returns the sum
@@ -352,6 +522,10 @@ class MCMC:
 
         out = self.sm.predict_(input_sets=samples)
         mean_pred, std_pred = out['output'], out['std']
+        if self.error_sm is not None:
+            out_em = self.error_sm.predict_(input_sets=samples)
+            mean_pred = mean_pred + out_em['output']
+            std_pred = std_pred + out_em['std']
 
         if self.include_error:
             log_likelihood = self.log_likelihood_error(model_predictions=mean_pred,
