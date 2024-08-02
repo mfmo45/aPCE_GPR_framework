@@ -349,6 +349,7 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
 
         criteria_dict['norm_error'] = dict()
         criteria_dict['P95'] = dict()
+        criteria_dict['DS'] = dict()
     else:
         sm_out = sim_y
 
@@ -398,6 +399,12 @@ def validation_error(true_y, sim_y, output_names, n_per_type):
             p95 = np.where((true_y[:, c:c + n_per_type] <= upper_ci[:, c:c + n_per_type]) & (
                         true_y[:, c:c + n_per_type] >= lower_ci[:, c:c + n_per_type]), 1, 0)
             criteria_dict['P95'][key] = np.mean(p95, axis=0)
+
+            # Dawid Score (https://www.jstor.org/stable/120118)
+            criteria_dict['DS'][key] = np.mean(((np.subtract(sm_out[:, c:c + n_per_type],
+                                                             true_y[:, c:c + n_per_type])) / (
+                                                            sm_std[:, c:c + n_per_type] ** 2)) + np.log(
+                sm_std[:, c:c + n_per_type] ** 2), axis=0)
 
         criteria_dict['r2'][key] = np.zeros(n_per_type)
         for j in range(n_per_type):
