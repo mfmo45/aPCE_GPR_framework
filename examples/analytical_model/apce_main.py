@@ -21,7 +21,7 @@ sys.path.append(str(par_path / 'src/utils'))
 from analytical_model import nonlinear_model
 
 from src.surrogate_modelling.bal_functions import BayesianInference, SequentialDesign
-from src.surrogate_modelling.apce import PCEConfig, aPCE, validation_error, save_valid_criteria
+from src.surrogate_modelling.apce_tests import PCEConfig, aPCE, validation_error, save_valid_criteria
 from src.surrogate_modelling.gpe_skl import SklTraining, RBF
 from src.surrogate_modelling.inputs import Input
 from src.surrogate_modelling.exp_design_ import ExpDesign
@@ -97,10 +97,10 @@ if __name__ == '__main__':
                            sampling_method='sobol',  # how to sample the initial training points
                            main_meta_model='apce',  # main surrogate method: 'gpr' or 'apce'
                            n_initial_tp=50,  # Number of initial training points (min = n_trunc*2)
-                           n_max_tp=55,  # max number of tp to use
-                           training_method='sequential',  # normal (train only once) or sequential (Active Learning)
+                           n_max_tp=50,  # max number of tp to use
+                           training_method='normal',  # normal (train only once) or sequential (Active Learning)
                            util_func='global_mc',  # criteria for bal (dkl, bme, ie, dkl_bme) or SF (default: global_mc)
-                           eval_step=10,  # every how many iterations to evaluate the surrogate
+                           eval_step=1,  # every how many iterations to evaluate the surrogate
                            secondary_meta_model=False  # only gpr is available as a secondary model
                            )
 
@@ -188,7 +188,7 @@ if __name__ == '__main__':
                   variance_cutoff=0,
                   pce_reg_method=pce_optimizer)
 
-        sm.train(initial_reg_method='BRR')
+        sm.train_(initial_reg_method='BRR')
         # sm.train_with_retrain_(initial_reg_method='BRR')
 
         # 1.1 Error model:

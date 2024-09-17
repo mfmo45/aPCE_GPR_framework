@@ -194,6 +194,8 @@ if __name__ == '__main__':
             # 1.1. Set up the kernel
             kernel = 1 * RBF(length_scale=exp_design.kernel_data['length_scale'],
                              length_scale_bounds=exp_design.kernel_data['bounds'])
+            # kernel = 1 * RBF(length_scale=1,
+            #                  length_scale_bounds=exp_design.kernel_data['bounds'][0])
             # 1.2. Setup a GPR: initialize the general SKL class
             sm = SklTraining(collocation_points=collocation_points, model_evaluations=model_evaluations,
                              noise=True,
