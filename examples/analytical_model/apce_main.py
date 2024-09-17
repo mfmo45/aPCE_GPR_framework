@@ -21,7 +21,7 @@ sys.path.append(str(par_path / 'src/utils'))
 from analytical_model import nonlinear_model
 
 from src.surrogate_modelling.bal_functions import BayesianInference, SequentialDesign
-from src.surrogate_modelling.apce_tests import PCEConfig, aPCE, validation_error, save_valid_criteria
+from src.surrogate_modelling.apce import PCEConfig, aPCE, validation_error, save_valid_criteria
 from src.surrogate_modelling.gpe_skl import SklTraining, RBF
 from src.surrogate_modelling.inputs import Input
 from src.surrogate_modelling.exp_design_ import ExpDesign
