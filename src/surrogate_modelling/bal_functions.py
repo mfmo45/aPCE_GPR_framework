@@ -538,8 +538,8 @@ class SequentialDesign:
         self.check_inputs()
 
     def check_inputs(self):
-        if self.observations.ndim != 1:
-            self.observations = self.observations.reshape(-1)
+        if self.observations.ndim == 1:
+            self.observations = self.observations.reshape(1, -1)
             print(f'The observations input was changed to a 1D vector with size {self.observations.shape}')
         if self.m_error.ndim != 1:
             self.m_error = self.m_error.reshape(-1)
@@ -611,7 +611,7 @@ class SequentialDesign:
                 score_exploit = results[1]
 
             # Normalize exploit score
-            score_exploit_norm = score_exploit / np.nansum(np.abs(score_exploit))
+            score_exploit_norm = score_exploit / np.nansum(score_exploit)
             self.exploit_score_norm = score_exploit_norm
             self.exploit_score = score_exploit
 
@@ -700,7 +700,7 @@ class SequentialDesign:
         #     std_mc[key] = np.zeros((self.mc_exploration, y_mean[key].shape[0]))
 
         cov = np.diag(y_std ** 2)
-        rv = stats.multivariate_normal(mean=y_mean, cov=cov)    # stats object with y_mean, y_var
+        rv = stats.multivariate_normal(mean=y_mean, cov=cov, allow_singular=True)    # stats object with y_mean, y_var
         y_mc = rv.rvs(size=self.mc_exploration)                 # sample from posterior space
         logPriorLikelihoods = rv.logpdf(y_mc)                   # get prior probability
 
