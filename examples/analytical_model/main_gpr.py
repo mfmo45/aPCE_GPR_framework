@@ -262,7 +262,7 @@ if __name__ == '__main__':
         if it < exp_design.n_iter:
             logger.info(f'Selecting {exp_design.training_step} additional TP using {exp_design.exploit_method}')
             SD = SequentialDesign(exp_design=exp_design, sm_object=sm, obs=obs, errors=error_pp**2,
-                                  do_tradeoff=False, multiprocessing=parallelize)
+                                  do_tradeoff=False)
 
             # new_tp, util_fun = SD.run_sequential_design(prior_samples=prior_samples)
             SD.gaussian_assumption = True

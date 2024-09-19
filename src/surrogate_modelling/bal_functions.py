@@ -480,8 +480,6 @@ class SequentialDesign:
             function to evaluate surrogate.
         n_cand_groups: int
             in how many lists to split the candidate set, to do MultiProcessing.
-        multiprocessing: bool
-            True to use multiprocessing (parallelize) tasks. False to set n_cand_groups=1
 
         obs : array [n_obs, ]     (ToDo: dict, with a key for each output type )
             array with observation values
