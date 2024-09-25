@@ -6,6 +6,7 @@ is done to manually set the "max_iter" and "gtol" values for the optimization of
 ToDo: Check GPyTorch+lbfgs to see if results can be improved by changing initial values or with Adam ?
 ToDo: Save each gp (for each loc) in a list, to call it later to do BAL+MCMC methods with them.
 """
+import logging
 
 import numpy as np
 import sys
@@ -16,7 +17,7 @@ from sklearn.utils.optimize import _check_optimize_result
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import sklearn.gaussian_process.kernels
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF
+from sklearn.gaussian_process.kernels import RBF, Matern
 import copy
 from joblib import Parallel, delayed
 from pathlib import Path
@@ -57,13 +58,11 @@ class MyGeneralGPR:
 
     """
     def __init__(self, collocation_points, model_evaluations):
-        self.training_points = collocation_points
-        self.model_evaluations = model_evaluations
+        self.X_train = collocation_points
+        self.y_train = model_evaluations
 
-        self.n_obs = self.model_evaluations.shape[1]
-        self.n_params = collocation_points.shape[1]
-
-        self.gp_list = []
+        # self.n_obs = self.model_evaluations.shape[1]
+        self.ndim = collocation_points.shape[1]
 
 
 # Scikit-Learn -----------------------------------------------------------------------------------------------------
@@ -120,10 +119,11 @@ class SklTraining(MyGeneralGPR):
     ToDo: Give evaluation location as input and then, add a function receives the observation point location and extracts
      the gpe predictions from it. These are the ones that will be used in BAL.
     """
-    def __init__(self, collocation_points, model_evaluations,  kernel,
+    def __init__(self, collocation_points, model_evaluations,
+                 kernel_name, kernel_anisotrpoy,
                  alpha, n_restarts, noise=True,
                  y_normalization=True, y_log=False,
-                 tp_normalization=False,
+                 tp_normalization=True,
                  optimizer="fmin_l_bfgs_b", parallelize=False, n_jobs=-2):
 
         super(SklTraining, self).__init__(collocation_points=collocation_points, model_evaluations=model_evaluations)
@@ -134,20 +134,31 @@ class SklTraining(MyGeneralGPR):
         self.y_log = y_log
         self.optimizer_ = optimizer
         self.noise = noise
+        self.alpha = alpha
 
         self.parallel = parallelize
         self.n_jobs = n_jobs
 
+        # Kernel
+        self.kernel_type = kernel_name
+        self.kernel_anisotropy = kernel_anisotrpoy
+
         # Options for GPR library:
         self.tp_norm = tp_normalization
 
-        self._id_vectors(alpha, kernel)
+        # self._id_vectors(alpha, kernel)
+
+        # Initialize variables needed
+        self.x_scaler = None
+        self.gp_dict = {}
+        self.gp_score = {}
 
     def _id_vectors(self, alpha, kernel):
         """
         Function checks if the inputs for alpha and kernel are a single variable or a list. If they are a single value,
         the function generates a list filled with the same value/object, so it can be properly read in the train_
         function.
+        ToDO: Fix this to be able to send an error value associated to training point as alpha.
         Args:
             alpha: <float> or <list of floats [n_obs]>
                 with input alpha value(s). If list, there should be one value per observation.
@@ -159,85 +170,117 @@ class SklTraining(MyGeneralGPR):
         if isinstance(alpha, list):
             self.alpha = np.array(alpha)
         elif isinstance(alpha, float):
-            self.alpha = np.full((self.training_points.shape[0], self.n_obs), alpha)
+            self.alpha = np.full((self.X_train.shape[0], 1), alpha)
         elif isinstance(alpha, np.ndarray):
-            if alpha.shape != (self.training_points.shape[0], self.n_obs):
+            if alpha.shape != (self.X_train.shape[0], 1):
                 print('Using an alpha of 0')
-                self.alpha = np.full((self.training_points.shape[0], self.n_obs), 0.0000001)
+                self.alpha = np.full((self.X_train.shape[0], 1), 0.0000001)
             else:
                 self.alpha = alpha
         else:
             self.alpha = np.full((self.training_points.shape[0], self.n_obs), 0.0000001)
 
-        if isinstance(kernel, list):
-            self.kernel = kernel
+        # if isinstance(kernel, list):
+        #     self.kernel = kernel
+        # else:
+        #     self.kernel = np.full(self.n_obs, kernel)
+
+    def build_kernel(self):
+        """
+        Build the GP kernel based on user input
+        ToDo: Add more Kernel options.
+        Returns:
+            Kernel object
+        """
+        # Bound values:
+        value = np.empty((), dtype=object)
+        value[()] = (1e-5, 1e3)
+
+        if self.kernel_anisotropy:
+            ls_initial = list(np.full(self.ndim, 1))
+            ls_bounds = list(np.full(self.ndim, value, dtype=object))
         else:
-            self.kernel = np.full(self.n_obs, kernel)
+            ls_initial = 1
+            ls_bounds = list(np.full(1, value, dtype=object))
+
+        # Create Kernel
+        if self.kernel_type.lower() == 'rbf':
+            kernel = 1 * RBF(length_scale=ls_initial,
+                             length_scale_bounds=ls_bounds)
+        elif self.kernel_type.lower == 'matern':
+            kernel = 1*Matern(length_scale=ls_initial,
+                              length_scale_bounds=ls_bounds,
+                              nu=1.5)
+        else:
+            logging.info(f'There is no available {self.kernel_type}. The RBF kernel will be used instead')
+            kernel = 1 * RBF(length_scale=ls_initial,
+                             length_scale_bounds=ls_bounds)
+            self.kernel_type = 'RBF'
+
+        return kernel
 
     def train_(self):
         """
-        ToDo: Use joblib to parallelize training
+        Trains a GP using the ScikitLearn library.
+        ToDO: See how to save the trained kernel hyperparameters (for plotting)
         Returns:
 
         """
-        # train a surrogate for each output observation:
-        if self.parallel and self.n_obs > 1:
-            # out = Parallel(n_jobs=-1, backend='multiprocessing')(delayed(self._fit)(self.training_points,
-            #                                                                         self.model_evaluations[:, i],
-            #                                                                         self.kernel[i],
-            #                                                                         self.alpha[i])
-            #                                                      for i in range(self.n_obs))
-            out = Parallel(n_jobs=self.n_jobs, backend='threading')(delayed(self._fit)(self.training_points,
-                                                                              self.model_evaluations[:, i],
-                                                                              self.kernel[i],
-                                                                              self.alpha[:, i])
-                                                           for i in range(self.n_obs))
-            self.gp_list = out
+        # Transform the inputs
+        if self.tp_norm:
+            # Normalize the training points
+            scaler_x_train = MinMaxScaler()
+            scaler_x_train.fit(self.X_train)
+            X_scaled = scaler_x_train.transform(self.X_train)
+            self.x_scaler = scaler_x_train
         else:
-            for i, model in enumerate(self.model_evaluations.T):
-                out = self._fit(self.training_points, model, self.kernel[i], self.alpha[:, i])
-                self.gp_list.append(out)
+            X_scaled = self.X_train
 
-    def _fit(self, collocation_points, model_y, kernel, alpha):
+        items = self.y_train.items()
+
+        for key, output in items:
+            n_obs = output.shape[1]
+            if self.parallel and n_obs > 1:
+                out_list = Parallel(n_jobs=self.n_jobs, backend='threading')(delayed(self._fit)(X_scaled,
+                                                                                                output[:, i])
+                                                                             for i in range(n_obs))
+            else:
+                out_list = []
+                for i, model in enumerate(output.T):
+                    out = self._fit(X_scaled, model)
+                    out_list.append(out)
+
+            self.gp_dict[key] = {}
+            self.gp_score[key] = {}
+            for i in range(n_obs):
+                self.gp_dict[key][f'y_{i}'] = out_list[i]['gp']
+                self.gp_score[key][f'y_{i}'] = out_list[i]['R2']
+
+    def _fit(self, X_, model_y):
         """
         Function trains the Scikit-Learn surrogate model for each training location
         Args:
-            collocation_points: array[n_tp, n_param]
+            X_: array[n_tp, n_param]
                 with training parameter sets
             model_y: array[n_tp,]
                 with simulator outputs in training points
-            kernel: object
-                base kernel object, with constant*RBF_kernel
 
         Returns: dict
             with trained gp object, hyperparameters and normalization parameters (if needed)
 
         """
         # Set Kernel:
+        kernel = self.build_kernel()
+
         if self.noise:
             kernel = kernel + sklearn.gaussian_process.kernels.WhiteKernel(noise_level=np.std(model_y)/np.sqrt(2))
 
         # 1.Initialize instance of sklearn GPR:
-        gp = MySklGPR(kernel=kernel, alpha=alpha, normalize_y=self.y_normalization_,
+        gp = MySklGPR(kernel=kernel, alpha=self.alpha, normalize_y=self.y_normalization_,
                       n_restarts_optimizer=self.n_restart, optimizer=self.optimizer_)
 
-        if self.y_log:
-            model_y = np.log(model_y)
-
-        if self.tp_norm:  # Normalize the training points (if the scales are very different)
-            # scaler_x_train = MinMaxScaler()
-            scaler_x_train = StandardScaler()
-            scaler_x_train.fit(self.training_points)
-            collocation_points_scaled = scaler_x_train.transform(self.training_points)
-
-            # 2. Train GPR
-            gp.fit(collocation_points_scaled, model_y)
-            score = gp.score(collocation_points_scaled, model_y)
-
-        else:  # KEEP TP as they are
-            # 2. Train GPR
-            gp.fit(collocation_points, model_y)
-            score = gp.score(collocation_points, model_y)
+        gp.fit(X_, model_y)
+        score = gp.score(X_, model_y)
 
         return_out_dic = dict()
         return_out_dic['gp'] = gp
@@ -245,174 +288,250 @@ class SklTraining(MyGeneralGPR):
         hp = np.exp(gp.kernel_.theta)
 
         return_out_dic['c_hp'] = hp[0]
-        if hp.shape[0] < self.n_params:
+        if hp.shape[0] < self.ndim:
             return_out_dic['cl_hp'] = hp[1]
         else:
-            return_out_dic['cl_hp'] = hp[1:self.n_params + 1]
+            return_out_dic['cl_hp'] = hp[1:self.ndim + 1]
 
         if self.noise:
             return_out_dic['noise_hp'] = hp[-1]
         return_out_dic['R2'] = score
-        if self.tp_norm:
-            return_out_dic['normalizer'] = scaler_x_train
 
         return return_out_dic
 
-    def predict_(self, input_sets, get_conf_int=False):
+    def predict_(self, x_):  # , get_conf_int=False):
         """
         Evaluates the surrogate models (for each loc) in all input_sets
         Args:
-            input_sets: array[MC, n_params]
+            x_: array[MC, n_params]
                 with parameter sets to evaluate the surrogate models in
-            get_conf_int: bool
-                True to estimate upper and lower confidence intervals
-
         Returns: dict
             with surrogate model mean (output) and the standard deviation (std) for each loc, size [n_obs, MC]
 
         """
-        # surrogate_prediction = np.zeros((len(self.gp_list), input_sets.shape[0]))  # GPE mean, for each obs
-        # surrogate_std = np.zeros((len(self.gp_list), input_sets.shape[0]))  # GPE mean, for each obs
-        # if get_conf_int:
-        #     upper_ci = np.zeros((len(self.gp_list), input_sets.shape[0]))  # GPE mean, for each obs
-        #     lower_ci = np.zeros((len(self.gp_list), input_sets.shape[0]))  # GPE mean, for each obs
-        surrogate_prediction = np.zeros((input_sets.shape[0], len(self.gp_list)))  # GPE mean, for each obs
-        surrogate_std = np.zeros((input_sets.shape[0], len(self.gp_list)))  # GPE mean, for each obs
-        if get_conf_int:
-            upper_ci = np.zeros((input_sets.shape[0], len(self.gp_list)))  # GPE mean, for each obs
-            lower_ci = np.zeros((input_sets.shape[0], len(self.gp_list)))  # GPE mean, for each obs
-        for i in range(0, self.n_obs):
-            if self.tp_norm:
-                input_scaled = self.gp_list[i]['normalizer'].transform(input_sets)
+        if self.tp_norm:
+            x_scaled = self.x_scaler.transform(x_)
+        else:
+            x_scaled = x_
 
-                surrogate_prediction[:, i], surrogate_std[:, i] = self.gp_list[i]['gp'].predict(input_scaled,
-                                                                                                return_std=True)
-            else:
-                surrogate_prediction[:, i], surrogate_std[:, i] = self.gp_list[i]['gp'].predict(input_sets,
-                                                                                                return_std=True)
-            if get_conf_int:
-                lower_ci[:, i] = surrogate_prediction[:, i] - (1.96 * surrogate_std[:, i])
-                upper_ci[:, i] = surrogate_prediction[:, i] + (1.96 * surrogate_std[:, i])
+        items = self.gp_dict.items()
 
-        output_dic = dict()
-        # if self.y_log:
-        #     surrogate_prediction = np.exp(surrogate_prediction)
-        #     surrogate_std = # TODO
-        output_dic['output'] = surrogate_prediction
-        output_dic['std'] = surrogate_std
-        if get_conf_int:
-            output_dic['upper_ci'] = upper_ci
-            output_dic['lower_ci'] = lower_ci
+        # Loop over output types:
+        y_pred = {}
+        y_std = {}
 
-        return output_dic
+        for key, gp_list in items:
+            n_obs = len(gp_list)
+
+            surrogate_prediction = np.zeros((x_.shape[0], n_obs))  # GPE mean, for each obs
+            surrogate_std = np.zeros((x_.shape[0], n_obs))  # GPE mean, for each obs
+            # if get_conf_int:
+            #     upper_ci = np.zeros((x_.shape[0], n_obs))  # GPE mean, for each obs
+            #     lower_ci = np.zeros((x_.shape[0], n_obs))  # GPE mean, for each obs
+
+            for i in range(n_obs):
+                gp = gp_list[f'y_{i}']
+                surrogate_prediction[:, i], surrogate_std[:, i] = gp.predict(x_scaled, return_std=True)
+
+                # y_pred[key] = {'output': surrogate_prediction,
+                #                'std': surrogate_std}
+                #
+                # if get_conf_int:
+                #     lower_ci[:, i] = surrogate_prediction[:, i] - (1.96 * surrogate_std[:, i])
+                #     upper_ci[:, i] = surrogate_prediction[:, i] + (1.96 * surrogate_std[:, i])
+                #
+                #     y_pred[key]['upper_ci'] = upper_ci
+                #     y_pred[key]['lower_ci'] = lower_ci
+            y_pred[key] = surrogate_prediction
+            y_std[key] = surrogate_std
+
+        return y_pred, y_std
+
+    @staticmethod
+    def validation_error(true_y, sim_y, sim_std=None, std_metrics=False):
+        """
+        Estimates different evaluation (validation) criteria for a surrogate model, for each output location. Results for
+        each output type are saved under different keys in a dictionary.
+        Args:
+            true_y: array [mc_valid, n_obs]
+                simulator outputs for valid_samples
+            sim_y: dict, with an array [mc_valid, n_obs] for each output type.
+                surrogate/emulator's outputs for valid_samples.
+            sim_std: dict, with an array [mc_valid, n_obs] for each output type.
+                Surrogate/emulator standar deviation
+            std_metrics: bool
+                True to estimate error-based validation criteria. Default is False
+
+        Returns: dict
+            with validation criteria, a key for each criteria, and a subkey for each output type
+
+        ToDo: add as part of MyGeneralGPR class, and the outputs are a dictionary, with output type as a key.
+        """
+        criteria_dict = {'rmse': dict(),
+                         'mse': dict(),
+                         'nse': dict(),
+                         'r2': dict(),
+                         'mean_error': dict(),
+                         'std_error': dict()}
+
+        if std_metrics:
+            criteria_dict['norm_error'] = dict()
+            criteria_dict['P95'] = dict()
+            criteria_dict['DS'] = dict()
+
+        for i, key in enumerate(sim_y):
+            sm_out = sim_y[key]
+            sm_std = sim_std[key]
+
+            # RMSE
+            criteria_dict['rmse'][key] = sklearn.metrics.mean_squared_error(y_true=true_y[key],
+                                                                            y_pred=sm_out,
+                                                                            multioutput='raw_values', squared=False)
+            # MSE
+            criteria_dict['mse'][key] = sklearn.metrics.mean_squared_error(y_true=true_y[key],
+                                                                           y_pred=sm_out,
+                                                                           multioutput='raw_values', squared=True)
+            # NSE
+            criteria_dict['nse'][key] = sklearn.metrics.r2_score(y_true=true_y[key],
+                                                                 y_pred=sm_out,
+                                                                 multioutput='raw_values')
+            # Mean errors
+            criteria_dict['mean_error'][key] = np.abs(
+                np.mean(true_y[key], axis=0) - np.mean(sm_out, axis=0)) / np.mean(true_y[key], axis=0)
+
+            criteria_dict['std_error'][key] = np.abs(
+                np.std(true_y[key], axis=0) - np.std(sm_out, axis=0)) / np.std(true_y[key], axis=0)
+
+            # R2 correlation
+            criteria_dict['r2'][key] = np.zeros(sm_out.shape[1])
+            for j in range(sm_out.shape[1]):
+                criteria_dict['r2'][key][j] = np.corrcoef(true_y[key][:, j], sm_out[:, j])[0, 1]
+
+            # Norm error
+            if std_metrics and sim_std is not None:
+                upper_ci = sm_out[:, i] + (1.96 * sm_std[:, i])
+                lower_ci = sm_out[:, i] - (1.96 * sm_std[:, i])
+
+                # Normalized error
+                ind_val = np.divide(np.subtract(sm_out, true_y[key]), sm_std[key])
+                criteria_dict['norm_error'][key] = np.mean(ind_val ** 2, axis=0)
+
+                # P95
+                p95 = np.where((true_y[key] <= upper_ci) & (
+                        true_y[key] >= lower_ci), 1, 0)
+                criteria_dict['P95'][key] = np.mean(p95, axis=0)
+
+                # Dawid Score (https://www.jstor.org/stable/120118)
+                criteria_dict['DS'][key] = np.mean(((np.subtract(sm_out, true_y[key])) / (sm_std ** 2)) + np.log(sm_std ** 2), axis=0)
+
+        return criteria_dict
+
+# -----------------------------------------------------------------------------------------------------------------
 
 
-# ------------------------------------------------------------------------------------------------------------------
-
-
-def validation_error(true_y, sim_y, output_names, n_per_type):
-    """
-    Estimates different evaluation (validation) criteria for a surrogate model, for each output location. Results for
-    each output type are saved under different keys in a dictionary.
-    Args:
-        true_y: array [mc_valid, n_obs]
-            simulator outputs for valid_samples
-        sim_y: array [mc_valid, n_obs] or dict{}
-            surrogate/emulator's outputs for valid_samples. If a dict is given, it has output and std keys.
-        output_names: array [n_types,]
-            with strings, with name of each output
-        n_per_type: int
-            Number of observation per output type
-
-    Returns: float, float or array[n_obs], float or array[n_obs]
-        with validation criteria for each output locaiton, and each output type
-
-    ToDo: Like in BayesValidRox, estimate surrogate predictions here, by giving a surrogate object as input (maybe)
-    ToDo: add as part of MyGeneralGPR class, and the outputs are a dictionary, with output type as a key.
-    """
-    criteria_dict = {'rmse': dict(),
-                     'mse': dict(),
-                     'nse': dict(),
-                     'r2': dict(),
-                     'mean_error': dict(),
-                     'std_error': dict()}
-
-    # criteria_dict = {'rmse': dict(),
-    #                  'valid_error': dict(),
-    #                  'nse': dict()}
-
-    if isinstance(sim_y, dict):
-        sm_out = sim_y['output']
-        sm_std = sim_y['std']
-        upper_ci = sim_y['upper_ci']
-        lower_ci = sim_y['lower_ci']
-
-        criteria_dict['norm_error'] = dict()
-        criteria_dict['P95'] = dict()
-        criteria_dict['DS'] = dict()
-    else:
-        sm_out = sim_y
-
-    # RMSE for each output location: not a dictionary (yet). [n_obs, ]
-    rmse = sklearn.metrics.mean_squared_error(y_true=true_y, y_pred=sm_out, multioutput='raw_values',
-                                              squared=False)
-
-    c = 0
-    for i, key in enumerate(output_names):
-        # RMSE
-        criteria_dict['rmse'][key] = sklearn.metrics.mean_squared_error(y_true=true_y[:, c:c + n_per_type],
-                                                                        y_pred=sm_out[:, c:c + n_per_type],
-                                                                        multioutput='raw_values', squared=False)
-        criteria_dict['mse'][key] = sklearn.metrics.mean_squared_error(y_true=true_y[:, c:c + n_per_type],
-                                                                       y_pred=sm_out[:, c:c + n_per_type],
-                                                                       multioutput='raw_values', squared=True)
-
-        # # NSE
-        criteria_dict['nse'][key] = sklearn.metrics.r2_score(y_true=true_y[:, c:c+n_per_type],
-                                                             y_pred=sm_out[:, c:c+n_per_type],
-                                                             multioutput='raw_values')
-        # # Validation error:
-        # criteria_dict['valid_error'][key] = criteria_dict['rmse'][key] ** 2 / np.var(true_y[:, c:c+n_per_type],
-        #                                                                              ddof=1, axis=0)
-
-        # NSE
-        criteria_dict['nse'][key] = sklearn.metrics.r2_score(y_true=true_y[:, c:c + n_per_type],
-                                                             y_pred=sm_out[:, c:c + n_per_type],
-                                                             multioutput='raw_values')
-        # Mean errors
-        criteria_dict['mean_error'][key] = np.abs(
-            np.mean(true_y[:, c:c + n_per_type], axis=0) - np.mean(sm_out[:, c:c + n_per_type], axis=0)) / np.mean(
-            true_y[:, c:c + n_per_type], axis=0)
-
-        criteria_dict['std_error'][key] = np.abs(
-            np.std(true_y[:, c:c + n_per_type], axis=0) - np.std(sm_out[:, c:c + n_per_type], axis=0)) / np.std(
-            true_y[:, c:c + n_per_type], axis=0)
-
-        # Norm error
-        if isinstance(sim_y, dict):
-            # Normalized error
-            ind_val = np.divide(np.subtract(sm_out[:, c:c + n_per_type], true_y[:, c:c + n_per_type]),
-                                sm_std[:, c:c + n_per_type])
-            criteria_dict['norm_error'][key] = np.mean(ind_val ** 2, axis=0)
-
-            # P95
-            p95 = np.where((true_y[:, c:c + n_per_type] <= upper_ci[:, c:c + n_per_type]) & (
-                        true_y[:, c:c + n_per_type] >= lower_ci[:, c:c + n_per_type]), 1, 0)
-            criteria_dict['P95'][key] = np.mean(p95, axis=0)
-
-            # Dawid Score (https://www.jstor.org/stable/120118)
-            criteria_dict['DS'][key] = np.mean(((np.subtract(sm_out[:, c:c + n_per_type],
-                                                             true_y[:, c:c + n_per_type])) / (
-                                                            sm_std[:, c:c + n_per_type] ** 2)) + np.log(
-                sm_std[:, c:c + n_per_type] ** 2), axis=0)
-
-        criteria_dict['r2'][key] = np.zeros(n_per_type)
-        for j in range(n_per_type):
-            criteria_dict['r2'][key][j] = np.corrcoef(true_y[:, j+c], sm_out[:, j+c])[0, 1]
-
-        c = c + n_per_type
-
-    return rmse, criteria_dict
+# def validation_error(true_y, sim_y, output_names, n_per_type):
+#     """
+#     Estimates different evaluation (validation) criteria for a surrogate model, for each output location. Results for
+#     each output type are saved under different keys in a dictionary.
+#     Args:
+#         true_y: array [mc_valid, n_obs]
+#             simulator outputs for valid_samples
+#         sim_y: array [mc_valid, n_obs] or dict{}
+#             surrogate/emulator's outputs for valid_samples. If a dict is given, it has output and std keys.
+#         output_names: array [n_types,]
+#             with strings, with name of each output
+#         n_per_type: int
+#             Number of observation per output type
+#
+#     Returns: float, float or array[n_obs], float or array[n_obs]
+#         with validation criteria for each output locaiton, and each output type
+#
+#     ToDo: Like in BayesValidRox, estimate surrogate predictions here, by giving a surrogate object as input (maybe)
+#     ToDo: add as part of MyGeneralGPR class, and the outputs are a dictionary, with output type as a key.
+#     """
+#     criteria_dict = {'rmse': dict(),
+#                      'mse': dict(),
+#                      'nse': dict(),
+#                      'r2': dict(),
+#                      'mean_error': dict(),
+#                      'std_error': dict()}
+#
+#     # criteria_dict = {'rmse': dict(),
+#     #                  'valid_error': dict(),
+#     #                  'nse': dict()}
+#
+#     if isinstance(sim_y, dict):
+#         sm_out = sim_y['output']
+#         sm_std = sim_y['std']
+#         upper_ci = sim_y['upper_ci']
+#         lower_ci = sim_y['lower_ci']
+#
+#         criteria_dict['norm_error'] = dict()
+#         criteria_dict['P95'] = dict()
+#         criteria_dict['DS'] = dict()
+#     else:
+#         sm_out = sim_y
+#
+#     # RMSE for each output location: not a dictionary (yet). [n_obs, ]
+#     rmse = sklearn.metrics.mean_squared_error(y_true=true_y, y_pred=sm_out, multioutput='raw_values',
+#                                               squared=False)
+#
+#     c = 0
+#     for i, key in enumerate(output_names):
+#         # RMSE
+#         criteria_dict['rmse'][key] = sklearn.metrics.mean_squared_error(y_true=true_y[:, c:c + n_per_type],
+#                                                                         y_pred=sm_out[:, c:c + n_per_type],
+#                                                                         multioutput='raw_values', squared=False)
+#         criteria_dict['mse'][key] = sklearn.metrics.mean_squared_error(y_true=true_y[:, c:c + n_per_type],
+#                                                                        y_pred=sm_out[:, c:c + n_per_type],
+#                                                                        multioutput='raw_values', squared=True)
+#
+#         # # NSE
+#         criteria_dict['nse'][key] = sklearn.metrics.r2_score(y_true=true_y[:, c:c+n_per_type],
+#                                                              y_pred=sm_out[:, c:c+n_per_type],
+#                                                              multioutput='raw_values')
+#         # # Validation error:
+#         # criteria_dict['valid_error'][key] = criteria_dict['rmse'][key] ** 2 / np.var(true_y[:, c:c+n_per_type],
+#         #                                                                              ddof=1, axis=0)
+#
+#         # NSE
+#         criteria_dict['nse'][key] = sklearn.metrics.r2_score(y_true=true_y[:, c:c + n_per_type],
+#                                                              y_pred=sm_out[:, c:c + n_per_type],
+#                                                              multioutput='raw_values')
+#         # Mean errors
+#         criteria_dict['mean_error'][key] = np.abs(
+#             np.mean(true_y[:, c:c + n_per_type], axis=0) - np.mean(sm_out[:, c:c + n_per_type], axis=0)) / np.mean(
+#             true_y[:, c:c + n_per_type], axis=0)
+#
+#         criteria_dict['std_error'][key] = np.abs(
+#             np.std(true_y[:, c:c + n_per_type], axis=0) - np.std(sm_out[:, c:c + n_per_type], axis=0)) / np.std(
+#             true_y[:, c:c + n_per_type], axis=0)
+#
+#         # Norm error
+#         if isinstance(sim_y, dict):
+#             # Normalized error
+#             ind_val = np.divide(np.subtract(sm_out[:, c:c + n_per_type], true_y[:, c:c + n_per_type]),
+#                                 sm_std[:, c:c + n_per_type])
+#             criteria_dict['norm_error'][key] = np.mean(ind_val ** 2, axis=0)
+#
+#             # P95
+#             p95 = np.where((true_y[:, c:c + n_per_type] <= upper_ci[:, c:c + n_per_type]) & (
+#                         true_y[:, c:c + n_per_type] >= lower_ci[:, c:c + n_per_type]), 1, 0)
+#             criteria_dict['P95'][key] = np.mean(p95, axis=0)
+#
+#             # Dawid Score (https://www.jstor.org/stable/120118)
+#             criteria_dict['DS'][key] = np.mean(((np.subtract(sm_out[:, c:c + n_per_type],
+#                                                              true_y[:, c:c + n_per_type])) / (
+#                                                             sm_std[:, c:c + n_per_type] ** 2)) + np.log(
+#                 sm_std[:, c:c + n_per_type] ** 2), axis=0)
+#
+#         criteria_dict['r2'][key] = np.zeros(n_per_type)
+#         for j in range(n_per_type):
+#             criteria_dict['r2'][key][j] = np.corrcoef(true_y[:, j+c], sm_out[:, j+c])[0, 1]
+#
+#         c = c + n_per_type
+#
+#     return rmse, criteria_dict
 
 
 def save_valid_criteria(new_dict, old_dict, n_tp):

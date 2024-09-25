@@ -11,56 +11,44 @@ best_vals = {'rmse': 0,
              }
 
 
-def plot_correlation(sm_out, valid_eval, output_names, label_list, n_loc_=1, fig_title=''):
+def plot_correlation(sm_out, valid_eval, r2_dict, fig_title=''):
     """Function plots the scatter plots for the outputs, comparing the validation output (x axis) and the
     surrogate outputs (y axis)
 
     Args:
         sm_out (np.array): surrogate outputs, of size [mc_size, n_obs].
         valid_eval (np.array): array [mc_size, n_obs], with the validation output
-        output_names (list): with names of the different output types
-        label_list (list): size same as output names. It contains the R2 information to add to each subplot label
-        n_loc_ (int, optional): with the number of locations, where each output_names is read. Defaults to 1.
+        r2_dict (dict): with a kex for each output type. It contains the R2 information to add to each subplot label
         fig_title (str, optional): Title of the plot_description_. Defaults to ''.
     """
     colormap = plt.cm.tab20
-    color_indices = np.linspace(0, 1, n_loc_)
+    color_indices = np.linspace(0, 1, 20)
     colors_obs = [colormap(color_index) for color_index in color_indices]
 
-    fig, axs = plt.subplots(1, len(output_names))
-    if len(output_names) == 1:
-        for i in range(n_loc_):
-            axs.scatter(valid_eval[:, i], sm_out[:, i], color=colors_obs[i], label=f'{i + 1}')
+    fig, axs = plt.subplots(1, len(sm_out))
+    if len(sm_out) == 1:
+        axs = np.array([axs])
+    for o, key in enumerate(sm_out):
+        for i in range(sm_out[key].shape[1]):
+            axs[o].scatter(valid_eval[key][:, i], sm_out[key][:, i], color=colors_obs[i], label=f'{i + 1}')
 
-        axs.plot([np.min(valid_eval), np.max(valid_eval)], [np.min(valid_eval), np.max(valid_eval)], color='black')
-        axs.set_xlabel(f'Full complexity model outputs')
-        axs.set_ylabel(f'Simulator outputs')
-        if label_list is not None:
-            axs.set_title(f'{output_names[0]} - R2:{label_list[0]}', loc='left')
-        fig.suptitle(f'{fig_title}')
-        handles, labels = axs.get_legend_handles_labels()
-    else:
-        c = 0
-        for o, ot in enumerate(output_names):
-            for i in range(n_loc_):
-                axs[o].scatter(valid_eval[:, i + c], sm_out[:, i + c], color=colors_obs[i], label=f'{i + 1}')
+        # Plot 1:1 line
+        mn = np.min(np.hstack((valid_eval[key], sm_out[key])))
+        mx = np.max(np.hstack((valid_eval[key], sm_out[key])))
 
-            mn = np.min(np.hstack((valid_eval[:, c:n_loc_ + c], sm_out[:, c:n_loc_ + c])))
-            mx = np.max(np.hstack((valid_eval[:, c:n_loc_ + c], sm_out[:, c:n_loc_ + c])))
+        axs[o].plot([mn, mx], [mn, mx], color='black', linestyle='--')
+        axs[o].set_title(f'{key} - R2:{np.mean(r2_dict[key][-1, :]):0.3f}', loc='left')
+        axs[o].set_xlabel(f'Full complexity model outputs')
 
-            axs[o].plot([mn, mx], [mn, mx], color='black', linestyle='--')
-            axs[o].set_title(f'{ot} - R2:{label_list[o]}', loc='left')
-            axs[o].set_xlabel(f'Full complexity model outputs')
+        if o == 0:
+            axs[o].set_ylabel(f'Simulator outputs')
+        axs[o].set_xlabel(f'FCM outputs')
 
-            if o == 0:
-                axs[o].set_ylabel(f'Simulator outputs')
-            c = c + n_loc_
-
-        fig.suptitle(f'{fig_title}')
-        handles, labels = axs[0].get_legend_handles_labels()
-
+    handles, labels = axs[o].get_legend_handles_labels()
+    fig.suptitle(f'{fig_title}')
     fig.legend(handles=handles, labels=labels, loc="center right", ncol=1)
     plt.subplots_adjust(top=0.9, bottom=0.15, wspace=0.2, hspace=0.5)
+    plt.show(block=False)
 
 
 def plot_validation_loc(eval_dict_list, label_list, output_names, n_loc, criteria=None, fig_title=''):

@@ -18,7 +18,8 @@ sys.path.append(str(par_path / 'src/surrogate_modelling'))
 sys.path.append(str(par_path / 'src/utils'))
 
 from analytical_model import nonlinear_model
-from src.plots.plots_1d_2d import *
+from src.plots.plots_1d_2d import plot_likelihoods, plot_combined_bal
+from plots_3d import plot_1d_gpe_final, plot_1d_gpe_bal
 
 from src.surrogate_modelling.bal_functions import BayesianInference, SequentialDesign
 from src.surrogate_modelling.gpe_skl import *
@@ -28,7 +29,7 @@ from src.surrogate_modelling.inputs import Input
 from src.surrogate_modelling.exp_design_ import ExpDesign
 
 from src.plots.plots_convergence import *
-from src.plots.plots_1d_2d import *
+# from src.plots.plots_1d_2d import *
 from src.plots.plots_validation import *
 
 from src.utils.log import *
@@ -54,16 +55,16 @@ if __name__ == '__main__':
     # ===============================================
     input_data_path = None
 
-    n_loc = 10   # number of output locations (Number of surrogates to train)
-    ndim = 2     # number of parameters
+    n_loc = 2   # number of output locations (Number of surrogates to train)
+    ndim = 1     # number of parameters
     output_names = ['Z']    # Name for the different type of output types (here only 1)
 
     pt_loc = np.arange(0, n_loc, 1.) / (n_loc - 1)
     # pt_loc = np.array([0.1111])
 
     # Synthetic true data .......................................
-    obs = np.full((1, n_loc), [2.])  # observation values, for each loc
-    error_pp = np.repeat([2. ], n_loc)
+    obs = {'Z': np.full((1, n_loc), [2.])}  # observation values, for each loc
+    error_pp = {'Z': np.repeat([2.**2], n_loc)}
 
     # Reference data:
     """Normally the reference data would be read from a file and imported here"""
@@ -92,10 +93,10 @@ if __name__ == '__main__':
                            sampling_method='sobol',  # how to sample the initial training points
                            main_meta_model='gpr',  # main surrogate method: 'gpr' or 'apce'
                            n_initial_tp=5,  # Number of initial training points (min = n_trunc*2)
-                           n_max_tp=25,  # max number of tp to use
+                           n_max_tp=8,  # max number of tp to use
                            training_method='sequential',  # normal (train only once) or sequential (Active Learning)
                            util_func='dkl',  # criteria for bal (dkl, bme, ie, dkl_bme) or SF (default: global_mc)
-                           eval_step=10,  # every how many iterations to evaluate the surrogate
+                           eval_step=1,  # every how many iterations to evaluate the surrogate
                            secondary_meta_model=False   # only gpr is available
                            )
 
@@ -117,7 +118,7 @@ if __name__ == '__main__':
     # already-run model runs.
     collocation_points = exp_design.generate_samples(n_samples=exp_design.n_init_tp,
                                                      sampling_method=exp_design.sampling_method)
-    model_evaluations = nonlinear_model(params=collocation_points, loc=pt_loc)
+    model_evaluations = nonlinear_model(params=collocation_points, loc=pt_loc, as_dict=True)
     """Note: The collocation points and model evaluations should be in numpy-array form, and in the order needed by 
     the gpe_skl.py or gpe_gpytorh.py classes"""
 
@@ -127,21 +128,21 @@ if __name__ == '__main__':
 
     # Reference data .......................................................
     prior = exp_design.generate_samples(n_samples=10_000)
-    ref_output = nonlinear_model(params=prior, loc=pt_loc)
+    ref_output = nonlinear_model(params=prior, loc=pt_loc, as_dict=True)
 
     prior_logpdf = np.log(exp_design.JDist.pdf(prior.T)).reshape(-1)
     ref_scores = BayesianInference(model_predictions=ref_output,
                                    observations=obs,
-                                   error=error_pp ** 2,
+                                   error=error_pp,
                                    sampling_method='rejection_sampling',
                                    prior=prior,
                                    prior_log_pdf=prior_logpdf)
 
-    ref_scores.estimate_bme()
+    ref_scores.do_inference()
 
     # Validation_data .....................................................
     valid_samples = exp_design.generate_samples(n_samples=100)
-    model_valid_output = nonlinear_model(params=valid_samples, loc=pt_loc)
+    model_valid_output = nonlinear_model(params=valid_samples, loc=pt_loc, as_dict=True)
 
     exp_design.val_x = valid_samples
     exp_design.val_y = model_valid_output
@@ -191,18 +192,12 @@ if __name__ == '__main__':
 
         # 1. Train surrogate
         if exp_design.gpr_lib == 'skl':
-            # 1.1. Set up the kernel
-            kernel = 1 * RBF(length_scale=exp_design.kernel_data['length_scale'],
-                             length_scale_bounds=exp_design.kernel_data['bounds'])
-            # kernel = 1 * RBF(length_scale=1,
-            #                  length_scale_bounds=exp_design.kernel_data['bounds'][0])
-            # 1.2. Setup a GPR: initialize the general SKL class
             sm = SklTraining(collocation_points=collocation_points, model_evaluations=model_evaluations,
-                             noise=True,
-                             kernel=kernel,
+                             noise=False,
+                             kernel_name='RBF', kernel_anisotrpoy=False,
                              alpha=1e-6,
                              n_restarts=10,
-                             parallelize=parallelize)
+                             parallelize=True)
 
         elif exp_design.gpr_lib == 'gpy':
             # 1.1. Set up the kernel
@@ -227,11 +222,10 @@ if __name__ == '__main__':
         # 2. Validate GPR
         if it % exp_design.eval_step == 0:
             # Evaluate surrogates
-            valid_sm = sm.predict_(input_sets=exp_design.val_x, get_conf_int=True)
+            valid_pred, valid_std = sm.predict_(x_=exp_design.val_x) #, get_conf_int=True)
 
             # Get validation criteria
-            rmse_sm, run_valid = validation_error(true_y=exp_design.val_y, sim_y=valid_sm,
-                                                  n_per_type=n_loc, output_names=output_names)
+            run_valid = sm.validation_error(true_y=exp_design.val_y, sim_y=valid_pred, sim_std=valid_std)
 
             # Save the results to a dictionary
             eval_dict = save_valid_criteria(new_dict=run_valid, old_dict=eval_dict,
@@ -247,22 +241,22 @@ if __name__ == '__main__':
             pickle.dump(eval_dict, open(save_name, "wb"))
 
         # 3. Compute Bayesian scores in parameter space ----------------------------------------------------------
-        surrogate_output = sm.predict_(input_sets=prior, get_conf_int=True)
+        surrogate_output, surrogate_std = sm.predict_(x_=prior)
 
-        total_error = (error_pp ** 2)
-        bi_gpe = BayesianInference(model_predictions=surrogate_output['output'], observations=obs, error=total_error,
+        # total_error = (error_pp ** 2)
+        bi_gpe = BayesianInference(model_predictions=surrogate_output, observations=obs, error=error_pp,
                                    sampling_method='rejection_sampling', prior=prior, prior_log_pdf=prior_logpdf)
-        bi_gpe.estimate_bme()
+        bi_gpe.do_inference()
         bayesian_dict['N_tp'][it] = collocation_points.shape[0]
         bayesian_dict['BME'][it], bayesian_dict['RE'][it] = bi_gpe.BME, bi_gpe.RE
         bayesian_dict['ELPD'][it], bayesian_dict['IE'][it] = bi_gpe.ELPD, bi_gpe.IE
-        bayesian_dict['post_size'][it] = bi_gpe.posterior_output.shape[0]
+        bayesian_dict['post_size'][it] = bi_gpe.posterior.shape[0]
 
         # 4. Sequential Design --------------------------------------------------------------------------------------
         if it < exp_design.n_iter:
             logger.info(f'Selecting {exp_design.training_step} additional TP using {exp_design.exploit_method}')
-            SD = SequentialDesign(exp_design=exp_design, sm_object=sm, obs=obs, errors=error_pp**2,
-                                  do_tradeoff=False)
+            SD = SequentialDesign(exp_design=exp_design, sm_object=sm, obs=obs, errors=error_pp,
+                                  parallel=False)
 
             # new_tp, util_fun = SD.run_sequential_design(prior_samples=prior_samples)
             SD.gaussian_assumption = True
@@ -272,7 +266,7 @@ if __name__ == '__main__':
             bayesian_dict['util_func'][it] = util_fun
 
             # Evaluate model in new TP: This is specific to each problem --------
-            new_output = nonlinear_model(params=new_tp, loc=pt_loc)
+            new_output = nonlinear_model(params=new_tp, loc=pt_loc, as_dict=True)
             # -------------------------------------------------------------------
 
             # Update collocation points:
@@ -281,22 +275,19 @@ if __name__ == '__main__':
                 model_evaluations = new_output
             else:
                 collocation_points = np.vstack((collocation_points, new_tp))
-                model_evaluations = np.vstack((model_evaluations, new_output))
+                for key in model_evaluations:
+                    model_evaluations[key] = np.vstack((model_evaluations[key], new_output[key]))
 
             # Plot process
             # if it % exp_design.eval_step == 0:
             #     if ndim == 1:
-            #         if SD.do_tradeoff:
-            #             plot_1d_bal_tradeoff(prior, surrogate_output['output'], surrogate_output['lower_ci'],
-            #                                  surrogate_output['upper_ci'], SD.candidates,
-            #                                  SD, collocation_points, model_evaluations, it, obs)
-            #         else:
-            #             plot_1d_gpe_bal(prior, surrogate_output['output'], surrogate_output['lower_ci'],
-            #                             surrogate_output['upper_ci'], SD.candidates,
-            #                             SD.total_score, collocation_points, model_evaluations, it, obs)
-            #     if ndim < 3:
-            #         plot_likelihoods(prior, bi_gpe.likelihood, prior, ref_scores.likelihood,
-            #                          n_iter=it + 1)
+            #
+            #         plot_1d_gpe_bal(gpr_x=prior, gpr_y=surrogate_output, gpr_std=surrogate_std, bal_x=SD.candidates,
+            #                         bal_y=SD.total_score, tp_x=collocation_points, tp_y=model_evaluations, it=it,
+            #                         true_y=obs)
+            #     # if ndim < 3:
+            #     #     plot_likelihoods(prior, bi_gpe.likelihood, prior, ref_scores.likelihood,
+            #     #                      n_iter=it + 1)
             #
             #     stop=1
 
@@ -304,10 +295,9 @@ if __name__ == '__main__':
 
     # Plot all TP:
     if ndim == 1:
-        plot_1d_gpe_final(prior, surrogate_output['output'],
-                          surrogate_output['lower_ci'], surrogate_output['upper_ci'],
-                          collocation_points, model_evaluations,
-                          exp_design.n_init_tp, exp_design.n_iter, obs)
+        plot_1d_gpe_final(gpr_x=prior, gpr_y=surrogate_output, gpr_std=surrogate_std,
+                          tp_x=collocation_points, tp_y=model_evaluations,
+                          tp_init=exp_design.n_init_tp, it=exp_design.n_iter, true_y=obs)
 
     if ndim < 3:
         plot_likelihoods(prior, bi_gpe.likelihood, prior, ref_scores.likelihood,
@@ -317,25 +307,24 @@ if __name__ == '__main__':
                               bayesian_dict=bayesian_dict)
 
     # Plot evaluation criteria:
-    plot_correlation(sm_out=valid_sm['output'], valid_eval=exp_design.val_y,
-                     output_names=output_names,
-                     label_list=[f"{np.mean(eval_dict['r2']['Z']):0.3f}"],
-                     fig_title=f'Outputs', n_loc_=n_loc)
+    plot_correlation(sm_out=valid_pred, valid_eval=exp_design.val_y,
+                     r2_dict=eval_dict['r2'],
+                     fig_title=f'Outputs')
 
-    plot_validation_loc(eval_dict_list=[run_valid], label_list=[''],
-                        output_names=output_names, n_loc=n_loc,
-                        criteria=['mse', 'nse', 'r2', 'mean_error', 'std_error'],
-                        fig_title=f'Validation criteria: TP: {exp_design.n_max_tp}')
-
-    plot_validation_loc(eval_dict_list=[run_valid], label_list=[''],
-                        output_names=output_names, n_loc=n_loc,
-                        criteria=['norm_error', 'P95'],
-                        fig_title=f'Validation criteria with error consideration: TP: {exp_design.n_max_tp}')
-
-    plot_validation_tp(eval_dict_list=[eval_dict], label_list=[''],
-                       output_names=output_names, n_loc=n_loc,
-                       criteria=['mse', 'nse', 'r2', 'mean_error', 'std_error'], plot_loc=True,
-                       fig_title='Validation criteria for increasing number of TP')
+    # plot_validation_loc(eval_dict_list=[run_valid], label_list=[''],
+    #                     output_names=output_names, n_loc=n_loc,
+    #                     criteria=['mse', 'nse', 'r2', 'mean_error', 'std_error'],
+    #                     fig_title=f'Validation criteria: TP: {exp_design.n_max_tp}')
+    #
+    # plot_validation_loc(eval_dict_list=[run_valid], label_list=[''],
+    #                     output_names=output_names, n_loc=n_loc,
+    #                     criteria=['norm_error', 'P95'],
+    #                     fig_title=f'Validation criteria with error consideration: TP: {exp_design.n_max_tp}')
+    #
+    # plot_validation_tp(eval_dict_list=[eval_dict], label_list=[''],
+    #                    output_names=output_names, n_loc=n_loc,
+    #                    criteria=['mse', 'nse', 'r2', 'mean_error', 'std_error'], plot_loc=True,
+    #                    fig_title='Validation criteria for increasing number of TP')
 
     # # Plot Bayesian criteria
     # plot_gpe_scores(bayesian_dict['BME'], bayesian_dict['RE'], exp_design.n_init_tp,
@@ -346,12 +335,10 @@ if __name__ == '__main__':
     # # Plot training points
     # plot_parameters(prior_samples, collocation_points, post=bi_gpe.posterior)
 
-
-
     end = 0
 
 """
-TO-DO:
+TODO:
 - FOR 1D-2D plots: 
 # 1) To plot GPE + BAL for single and multiple observation points (and only one N_p), do separate functions (CONTINUE)
 # 2) Plot GPE and Ref likelihoods
@@ -359,6 +346,7 @@ TO-DO:
 - For general case:
 # 1) Plot RE, ELPD and BME for GPE and reference model with increasing number of iterations 
 # 2) Plot BAl criteria with increasing number of iterations 
+# 3) Plot validation criteria for each output type
 3) Save time for each run, changing number of data points and parameters (one at a time) to plot later
 4) Plot 1 and 2 for case 3
 5) Add loop for number of parameters? 

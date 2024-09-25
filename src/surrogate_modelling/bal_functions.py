@@ -1,6 +1,7 @@
 """
 
 """
+import copy
 
 import numpy as np
 import scipy.stats as stats
@@ -9,7 +10,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from src.surrogate_modelling.exploration import Exploration
-
+import matplotlib.pyplot as plt
 
 class BayesianInference:
     """
@@ -22,7 +23,6 @@ class BayesianInference:
             with error + noise to be inserted as is in covariance matrix
         prior: np.array [MC_size, number of parameters],
             array with prior parameter sets. If None, no posterior parameter set is saved.
-
         prior_log_pdf: np.array [MC_size, ]
             array with the prior log probabilities of each parameter sample in "prior". Default is None, in which case
             the IE will not be estimated. It can be sent with or without the 'prior' variable.
@@ -88,20 +88,20 @@ class BayesianInference:
 
         self.prior_logpdf = prior_log_pdf
 
-        self.cov_mat = None
+        # self.cov_mat = None
         self.likelihood = None
         self.log_likelihood = None
 
         self.post_likelihood = None
         self.posterior = None
-        self.posterior_output = None
+        self.posterior_output = {}
 
         self.BME = None
         self.ELPD = None
         self.RE = None
         self.IE = None
 
-        self.calculate_constants()
+        # self.calculate_constants()
 
     def calculate_constants(self):
         """
@@ -110,12 +110,18 @@ class BayesianInference:
 
         :return: None
         """
-        if type(self.error) is not np.ndarray:
-            self.error = np.array([self.error])
-        self.cov_mat = np.diag(self.error)
+        for key in self.error:
+            if self.error[key] is not np.ndarray:
+                self.error[key] = np.array(self.error[key])
+            if self.model_predictions[key].ndim == 1:
+                self.model_predictions[key] = np.reshape(self.model_predictions[key], (-1, 1))
 
-        if self.model_predictions.ndim == 1:
-            self.model_predictions = np.reshape(self.model_predictions, (-1, 1))
+        # if type(self.error) is not np.ndarray:
+        #     self.error = np.array([self.error])
+        # self.cov_mat = np.diag(self.error)
+
+        # if self.model_predictions.ndim == 1:
+        #     self.model_predictions = np.reshape(self.model_predictions, (-1, 1))
 
     def calculate_likelihood(self):
         """
@@ -151,7 +157,7 @@ class BayesianInference:
 
     def calculate_likelihood_manual(self):
         """
-        Function calculates likelihood between observations and the model output manually, using numpy calculations.
+        Function calculates log-likelihood between observations and the model output manually, using numpy calculations.
 
         Notes:
         * Generates likelihood array with size [MCxN], where N is the number of measurement data sets.
@@ -159,36 +165,46 @@ class BayesianInference:
         errors.
         * Method is faster than using stats module ('calculate_likelihood' function).
         """
-        # Calculate constants:
-        det_R = np.linalg.det(self.cov_mat)
-        invR = np.linalg.inv(self.cov_mat)
-        const_mvn = pow(2 * math.pi, - self.observations.shape[1] / 2) * (1 / math.sqrt(det_R))  # ###########
+        items = self.model_predictions.items()
+        total_log_lk = 0
+        total_lk = 1
 
-        # vectorize means:
-        means_vect = self.observations[:, np.newaxis]  # ############
+        for key, y_ in items:
+            # Calculate constants:
+            cov_mat = np.diag(self.error[key])
+            invR = np.linalg.inv(cov_mat)
+            # det_R = np.linalg.det(cov_mat)
+            # const_mvn = pow(2 * math.pi, - self.observations[key].shape[1] / 2) * (1 / math.sqrt(det_R))  # ########
 
-        # Calculate differences and convert to 4D array (and its transpose):
-        diff = means_vect - self.model_predictions  # Shape: # means
-        diff_4d = diff[:, :, np.newaxis]
-        transpose_diff_4d = diff_4d.transpose(0, 1, 3, 2)
+            # vectorize means:
+            means_vect = self.observations[key][:, np.newaxis]  # ############
 
-        # Calculate values inside the exponent
-        inside_1 = np.einsum("abcd, dd->abcd", diff_4d, invR)
-        inside_2 = np.einsum("abcd, abdc->abc", inside_1, transpose_diff_4d)
-        total_inside_exponent = inside_2.transpose(2, 1, 0)
-        total_inside_exponent = np.reshape(total_inside_exponent,
-                                           (total_inside_exponent.shape[1], total_inside_exponent.shape[2]))
+            # Calculate differences and convert to 4D array (and its transpose):
+            diff = means_vect - y_  # Shape: # means
+            diff_4d = diff[:, :, np.newaxis]
+            transpose_diff_4d = diff_4d.transpose(0, 1, 3, 2)
 
-        # likelihood = const_mvn * np.exp(-0.5 * total_inside_exponent)
-        likelihood = np.exp(-0.5 * total_inside_exponent)
-        log_likelihood = -0.5 * total_inside_exponent
+            # Calculate values inside the exponent
+            inside_1 = np.einsum("abcd, dd->abcd", diff_4d, invR)
+            inside_2 = np.einsum("abcd, abdc->abc", inside_1, transpose_diff_4d)
+            total_inside_exponent = inside_2.transpose(2, 1, 0)
+            total_inside_exponent = np.reshape(total_inside_exponent,
+                                               (total_inside_exponent.shape[1], total_inside_exponent.shape[2]))
+
+            # likelihood = const_mvn * np.exp(-0.5 * total_inside_exponent)
+            likelihood = np.exp(-0.5 * total_inside_exponent)
+            log_likelihood = -0.5 * total_inside_exponent
+
+            total_lk = total_lk*likelihood
+            total_log_lk = total_log_lk + log_likelihood
 
         # Convert likelihoods to vector:
-        if log_likelihood.shape[1] == 1:
-            likelihood = likelihood[:, 0]
-            log_likelihood = log_likelihood[:, 0]
-        self.log_likelihood = log_likelihood
-        self.likelihood = likelihood
+        if total_log_lk.shape[1] == 1:
+            total_lk = total_lk[:, 0]
+            total_log_lk = total_log_lk[:, 0]
+
+        self.log_likelihood = total_log_lk
+        self.likelihood = total_lk
 
     def calculate_likelihood_with_error(self):
         """
@@ -250,7 +266,7 @@ class BayesianInference:
             prior.
         """
         # Generate MC number of random values between 1 and 0 (uniform dist) ---------------------------------------- #
-        rn = stats.uniform.rvs(size=self.model_predictions.shape[0])  # random numbers
+        rn = stats.uniform.rvs(size=self.likelihood.shape[0])  # random numbers
 
         if self.log_likelihood is not None and self.use_log:
             log_rn = np.log(rn)
@@ -268,18 +284,23 @@ class BayesianInference:
             self.post_loglikelihood = np.log(self.post_likelihood)
 
         # Get posterior samples
-        self.posterior_output = np.take(self.model_predictions, post_index, axis=0)
+        for key in self.model_predictions:
+            self.posterior_output[key] = np.take(self.model_predictions[key], post_index, axis=0)
+
         if self.prior is not None:
             self.posterior = np.take(self.prior, post_index, axis=0)
+
         # 4. Get posterior log-pdf values:
         if self.prior_logpdf is not None:
             self.post_logpdf = self.prior_logpdf[post_index]
 
-    def estimate_bme(self):
+    def do_inference(self):
         """
-        Function calculates likelihood and BME (prior based) and then, based on the given posterior sampling criteria,
-        obtains a posterior likelihood, ELPD and RE.
+        Function implements Bayesian inference using MC sampling. It first estimates the likelihood of each sample.
+        Then it estimates a posterior, based on a posterior sampling criteria (Rejection Sampling or Weighted sampling).
+        Lastly, it estimats the scores, including BME, ELPD, Dkl and IE.
 
+        ToDO: Parallelize likelihood? What is faster?
         :return:
 
         Note:
@@ -472,6 +493,7 @@ class SequentialDesign:
     """
     Class runs the optimal design of experiments (sequential design) to select the new training points, to add to the
     existing training points for surrogate model training.
+    ToDo: Fix case where exploration score is also considered. Right now, there is no tradeoff score, only BAL-related score
     Args:
         exp_design: ExpDesign object
             Used to sample from the prior distribution, and extract exploit and explore methods.
@@ -513,7 +535,7 @@ class SequentialDesign:
         self.SM = sm_object
         self.EM = secondary_sm
 
-        self.observations = obs
+        self.observations = copy.deepcopy(obs)
         self.m_error = errors
 
         self.n_cand_groups = n_cand_groups
@@ -536,12 +558,13 @@ class SequentialDesign:
         self.check_inputs()
 
     def check_inputs(self):
-        if self.observations.ndim == 1:
-            self.observations = self.observations.reshape(1, -1)
-            print(f'The observations input was changed to a 1D vector with size {self.observations.shape}')
-        if self.m_error.ndim != 1:
-            self.m_error = self.m_error.reshape(-1)
-            print(f'The error input was changed to a 1D vector with size {self.m_error.shape}')
+        for key in self.observations:
+            if self.observations[key].ndim == 1:
+                self.observations[key] = self.observations[key].reshape(1, -1)
+                print(f'The observations input was changed to a 1D vector with size {self.observations.shape}')
+            if self.m_error[key].ndim != 1:
+                self.m_error[key] = self.m_error[key].reshape(-1)
+                print(f'The error input was changed to a 1D vector with size {self.m_error.shape}')
 
     def run_sequential_design(self, prior_samples=None):
 
@@ -554,7 +577,7 @@ class SequentialDesign:
         # to select the new training point
         if prior_samples is not None:
             candidate_idx = self.select_indexes(prior_samples=prior_samples,
-                                                collocation_points=self.SM.training_points)
+                                                collocation_points=self.SM.X_train)
             all_candidates = prior_samples[candidate_idx, :]
             # Update number of mc_samples:
             score_exploration = np.zeros(self.mc_samples)
@@ -609,24 +632,27 @@ class SequentialDesign:
                 score_exploit = results[1]
 
             # Normalize exploit score
-            score_exploit_norm = score_exploit / np.nansum(score_exploit)
-            self.exploit_score_norm = score_exploit_norm
+            # score_exploit_norm = score_exploit / np.nansum(score_exploit)
+            # self.exploit_score_norm = score_exploit_norm
             self.exploit_score = score_exploit
 
-            if self.do_tradeoff:
-                # assigning 50-50 score to exploitation and exploration
-                total_score = (0.5 * score_exploration) + (0.5 * score_exploit_norm)
-                self.total_score = total_score
-            else:
-                total_score = score_exploit_norm
-                self.total_score = score_exploit
+            # if self.do_tradeoff:
+            #     # assigning 50-50 score to exploitation and exploration
+            #     total_score = (0.5 * score_exploration) + (0.5 * score_exploit_norm)
+            #     self.total_score = total_score
+            # else:
+            #     total_score = score_exploit_norm
+            #     self.total_score = score_exploit
+
+            # total_score = score_exploit_norm
+            self.total_score = score_exploit
 
             if np.nansum(score_exploit) == 0:
                 util_fun = 'global_mc'
 
             # Order in descending order
-            temp = total_score.copy()  # copy
-            temp[np.isnan(total_score)] = -np.inf  # make all nan entries -inf
+            temp = self.total_score.copy()  # copy
+            temp[np.isnan(self.total_score)] = -np.inf  # make all nan entries -inf
             if 'ie' in util_fun.lower():                         # To maximize -IE
                 temp = [val if val != 0 else -np.inf for val in temp]
             sorted_idx = np.argsort(temp)[::-1]  # order from largest to smallest
@@ -666,14 +692,14 @@ class SequentialDesign:
 
         Parameters
         ----------
-        y_mean : array [n_samples, n_obs]   ToDo: Dictionary, with a key for each output type, each array [mc_size, n_obs]
-            Array with surrogate model outputs (mean)
-        y_std : array [n_samples, n_obs]   ToDo: Dictionary, with a key for each output type, each array [mc_size, n_obs]
-            Array with output standard deviation
-        observations : array [n_obs, ] ToDo: Dictionary, with a key for each output type, each array [1, n_obs]
-            array with measured observations
-        error : array [n_obs]   ToDO: dict A dictionary containing the measurement errors (sigma^2). One dictionary for each output type
-            an array with the observation errors associated to each output
+        y_mean : Dictionary, with a key for each output type, each array [mc_size, n_obs]
+            surrogate model outputs (mean)
+        y_std : Dictionary, with a key for each output type, each array [mc_size, n_obs]
+            surrogate model output standard deviation
+        observations : Dictionary, with a key for each output type, each array [1, n_obs]
+            measured observations
+        error : Dictionary, with a key for each output type, array [n_obs]
+            observation variance associated to each output
         utility_function : string, optional
             BAL design criterion. The default is 'DKL'.
 
@@ -683,29 +709,27 @@ class SequentialDesign:
             Score.
 
         """
-        obs_data = self.observations
-        n_obs = self.observations.shape[0]
 
         # Explore posterior:
         # '''ToDo: when outputs are modified to dictionaries'''
-        # y_mc, std_mc = {}, {}
-        # logPriorLikelihoods = np.zeros(self.mc_exploration)
-        # for key in list(y_mean):
-        #     cov = np.diag(y_std[key] ** 2)
-        #     rv = stats.multivariate_normal(mean=y_mean[key], cov=cov)    # stats object with y_mean, y_var
-        #     y_mc[key] = rv.rvs(size=self.mc_exploration)                 # sample from posterior space
-        #     logPriorLikelihoods += rv.logpdf(y_mc[key])                  # get prior probability
-        #     std_mc[key] = np.zeros((self.mc_exploration, y_mean[key].shape[0]))
+        y_mc, std_mc = {}, {}
+        logPriorLikelihoods = np.zeros(self.mc_exploration)
+        for key in y_mean:
+            cov = np.diag(y_std[key] ** 2)
+            rv = stats.multivariate_normal(mean=y_mean[key], cov=cov)    # stats object with y_mean, y_var
+            y_mc[key] = rv.rvs(size=self.mc_exploration)                 # sample from posterior space
+            logPriorLikelihoods += rv.logpdf(y_mc[key])                  # get prior probability
+            std_mc[key] = np.zeros((self.mc_exploration, y_mean[key].shape[0]))
 
-        cov = np.diag(y_std ** 2)
-        rv = stats.multivariate_normal(mean=y_mean, cov=cov, allow_singular=True)    # stats object with y_mean, y_var
-        y_mc = rv.rvs(size=self.mc_exploration)                 # sample from posterior space
-        logPriorLikelihoods = rv.logpdf(y_mc)                   # get prior probability
+        # cov = np.diag(y_std ** 2)
+        # rv = stats.multivariate_normal(mean=y_mean, cov=cov, allow_singular=True)    # stats object with y_mean, y_var
+        # y_mc = rv.rvs(size=self.mc_exploration)                 # sample from posterior space
+        # logPriorLikelihoods = rv.logpdf(y_mc)                   # get prior probability
 
         bi_bal = BayesianInference(model_predictions=y_mc, observations=observations, error=error,
                                    prior_log_pdf=logPriorLikelihoods,                    # Needed to estimate IE
                                    sampling_method='rejection_sampling')
-        bi_bal.estimate_bme()
+        bi_bal.do_inference()
 
         if utility_function.lower() == 'dkl':    # '''ToDo: Make it prior/posterior based'''
             u_j_d = bi_bal.RE           # Max is better: leave as positive
@@ -741,43 +765,101 @@ class SequentialDesign:
         Returns:
             float: analytical BAL criteria for the given input distribution
         """
-        n_obs = observations.shape[0]
+        n_obs = 0
+        posterior_var_mv = None
+        posterior_mean_mv = None
 
-        if observations.ndim == 2:
-            observations = observations.reshape(-1)
+        prior_var = None
+        prior_mean = None
 
-        # Prior
-        prior_cov = np.diag(y_std ** 2)
+        obs_mean = None
+        obs_var = None
 
-        # Likelihood: observation info
-        error_cov = np.diag(error)
+        for key in y_mean:
+            obs = observations[key].reshape(-1) if observations[key].ndim == 2 else observations[key]
+            n_obs_old = n_obs
+            n_obs += obs.shape[0]
 
-        # Estimate posterior analytically
-        posterior_var_mv = np.linalg.inv(np.add(np.linalg.inv(error_cov), np.linalg.inv(prior_cov)))
-        posterior_mean_mv = np.dot(posterior_var_mv,
-                                   np.dot(np.linalg.inv(prior_cov), y_mean) + np.dot(np.linalg.inv(error_cov),
-                                                                                     observations))
+            if observations[key].ndim == 2:
+                observations[key] = observations[key].reshape(-1)
+
+            # Covariance diagonals
+            prior_cov_diag = y_std[key] ** 2
+            error_cov_diag = error[key]
+
+            # Posterior covariance and mean
+            prior_cov_inv = np.diag(1/prior_cov_diag)
+            error_cov_inv = np.diag(1/error_cov_diag)
+            post_cov_inv = prior_cov_inv + error_cov_inv
+            post_cov = np.diag(1 / np.diag(post_cov_inv))  # Invert diagonal matrix
+
+            post_mean = np.dot(post_cov, np.dot(prior_cov_inv, y_mean[key]) + np.dot(error_cov_inv, obs))
+
+            if posterior_mean_mv is None:
+                # Prior:
+                prior_mean = y_mean[key]
+                prior_var = prior_cov_diag
+
+                # Posterior
+                posterior_mean_mv = post_mean
+                posterior_var_mv = post_cov
+
+                # Obs
+                obs_mean = obs
+                obs_var = error_cov_diag
+
+            else:
+                # Prior
+                prior_mean = np.concatenate((prior_mean, y_mean[key]))
+                prior_var = np.concatenate((prior_var, prior_cov_diag))
+
+                # Posterior
+                posterior_mean_mv = np.concatenate((posterior_mean_mv, post_mean))
+                posterior_var_mv = np.block([[posterior_var_mv, np.zeros((n_obs_old, obs.shape[0]))], # upper right
+                                             [np.zeros((obs.shape[0], n_obs_old)), post_cov]])   # bottom left
+
+                # Obs
+                obs_mean = np.concatenate((obs_mean, obs))
+                obs_var = np.concatenate((obs_var, error_cov_diag))
+
+        obs_cov = np.diag(obs_var)
+        prior_cov = np.diag(prior_var)
+
         # Check if MG overlap
-        if self.gaussian_overlap(mu1=y_mean, cov1=prior_cov, mu2=posterior_mean_mv, cov2=posterior_var_mv):
-            if utility_function == 'dkl':
+        x = self.gaussian_overlap(mu1=prior_mean, cov1=prior_cov, mu2=posterior_mean_mv, cov2=posterior_var_mv)
+        if self.gaussian_overlap(mu1=prior_mean, cov1=prior_cov, mu2=posterior_mean_mv, cov2=posterior_var_mv):
+            if utility_function.lower() == 'dkl':
                 u_j_d = self.multivariate_gaussian_kl_divergence(mu_p=posterior_mean_mv, cov_p=posterior_var_mv,
-                                                                 mu_q=y_mean, cov_q=prior_cov)
-            elif utility_function == 'ie':
+                                                                 mu_q=prior_mean, cov_q=prior_cov)
+            elif utility_function.lower() == 'ie':
                 u_j_d = 0.5 * np.log(((2 * math.pi * math.e) ** n_obs) * np.linalg.det(posterior_var_mv))
-                u_j_d = -1 * u_j_d
+                u_j_d = -u_j_d
 
-            elif utility_function == 'post_bme':  # post log(BME)
+            elif utility_function.lower() == 'post_bme':  # post log(BME)
                 # Sample from posterior
                 posterior_mv = stats.multivariate_normal(mean=posterior_mean_mv, cov=posterior_var_mv)
                 posterior_samples_mv = posterior_mv.rvs(size=self.mc_exploration)
 
                 IE = 0.5 * np.log(((2 * math.pi * math.e) ** n_obs) * np.linalg.det(posterior_var_mv))
-                prior_log_pdf = self.posterior_log_likelihood(samples=posterior_samples_mv.reshape(-1, n_obs),
-                                                              mean=y_mean.reshape(1, -1), cov_mat=prior_cov)
-                post_log_likelihoods = self.posterior_log_likelihood(samples=posterior_samples_mv.reshape(-1, n_obs),
-                                                                     mean=observations.reshape(1, -1),
-                                                                     cov_mat=error_cov)
+
+                prior_log_pdf = stats.multivariate_normal.logpdf(x=posterior_samples_mv, mean=prior_mean, cov=prior_cov)
+                post_log_likelihoods = stats.multivariate_normal.logpdf(x=posterior_samples_mv, mean=obs_mean,
+                                                                        cov=obs_cov)
+                # prior_log_pdf_2 = self.posterior_log_likelihood(samples=posterior_samples_mv.reshape(-1, n_obs),
+                #                                               mean=prior_mean.reshape(1, -1), cov_mat=prior_cov)
+                # post_log_likelihoods_2 = self.posterior_log_likelihood(samples=posterior_samples_mv.reshape(-1, n_obs),
+                #                                                      mean=obs_mean.reshape(1, -1),
+                #                                                      cov_mat=obs_cov)
                 u_j_d = np.mean(post_log_likelihoods) + np.mean(prior_log_pdf) + IE
+
+                # fig, ax = plt.subplots(2)
+                # prior_samples = stats.multivariate_normal.rvs(mean=prior_mean, cov=prior_cov, size=10000)
+                # for i in range(2):
+                #     # ax[i].hist(prior_samples[:, i], color='gray', label='prior', density=True, alpha=0.5)
+                #     ax[i].hist(posterior_samples_mv[:, i], color='blue', alpha=0.7, density=True)
+                #     ax[i].plot([obs_mean[i], obs_mean[i]], [0, 0.5], color='black')
+                #     ax[i].set_title(f'BME: {u_j_d}')
+                # plt.show(block=False)
         else:
             # If the 99% confidence intervals of the prior and posteior multivariate gaussian doesn't overlap in any
             # dimension, then I cannot calculate RE or IE, so I assign a nan value, so the parameter set is not
@@ -823,21 +905,16 @@ class SequentialDesign:
             U_J_d = np.zeros(n_candidate)       # array to save scores for each candidate
 
             # Evaluate candidates in surrogate model
-            output = self.SM.predict_(input_sets=candidates)
-            y_cand = output['output']
-            std_cand = output['std']
-            if self.EM is not None:
-                error_out = self.EM.predict_(input_sets=candidates)
-
-                y_cand = y_cand + error_out['output']
-                std_cand = std_cand + error_out['std']
+            y_cand, std_cand = self.SM.predict_(x_=candidates)
+            # if self.EM is not None:
+            #     y_error, std_error = self.EM.predict_(x_=candidates)
+                # y_cand = y_cand + y_error
+                # std_cand = std_cand + std_error
 
             for idx, cand in tqdm(enumerate(candidates), ascii=True, desc='Exploring posterior in BAL Design'):
                 '''ToDo: When SM output has dictionaries for each output type'''
-                # y_mean = {key: items[idx] for key, items in y_cand.items()}
-                # y_std = {key: items[idx] for key, items in std_cand.items()}
-                y_mean = y_cand[idx, :]
-                y_std = std_cand[idx, :]
+                y_mean = {key: items[idx] for key, items in y_cand.items()}
+                y_std = {key: items[idx] for key, items in std_cand.items()}
                 if utility_func.lower() == "bme" or not self.gaussian_assumption:
                     U_J_d[idx] = self.bayesian_active_learning(y_mean=y_mean, y_std=y_std,
                                                                observations=self.observations, error=m_error,
