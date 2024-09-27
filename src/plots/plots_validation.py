@@ -37,7 +37,10 @@ def plot_correlation(sm_out, valid_eval, r2_dict, fig_title=''):
         mx = np.max(np.hstack((valid_eval[key], sm_out[key])))
 
         axs[o].plot([mn, mx], [mn, mx], color='black', linestyle='--')
-        axs[o].set_title(f'{key} - R2:{np.mean(r2_dict[key][-1, :]):0.3f}', loc='left')
+        try:
+            axs[o].set_title(f'{key} - R2:{np.mean(r2_dict[key][-1, :]):0.3f}', loc='left')
+        except:
+            axs[o].set_title(f'{key} - R2:{np.mean(r2_dict[key]):0.3f}', loc='left')
         axs[o].set_xlabel(f'Full complexity model outputs')
 
         if o == 0:

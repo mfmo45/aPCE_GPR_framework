@@ -55,8 +55,8 @@ if __name__ == '__main__':
     # ===============================================
     input_data_path = None
 
-    n_loc = 2   # number of output locations (Number of surrogates to train)
-    ndim = 1     # number of parameters
+    n_loc = 10   # number of output locations (Number of surrogates to train)
+    ndim = 2     # number of parameters
     output_names = ['Z']    # Name for the different type of output types (here only 1)
 
     pt_loc = np.arange(0, n_loc, 1.) / (n_loc - 1)
@@ -92,8 +92,8 @@ if __name__ == '__main__':
                            training_step=1,  # No. of training points to sample in each iteration
                            sampling_method='sobol',  # how to sample the initial training points
                            main_meta_model='gpr',  # main surrogate method: 'gpr' or 'apce'
-                           n_initial_tp=5,  # Number of initial training points (min = n_trunc*2)
-                           n_max_tp=8,  # max number of tp to use
+                           n_initial_tp=50,  # Number of initial training points (min = n_trunc*2)
+                           n_max_tp=50,  # max number of tp to use
                            training_method='sequential',  # normal (train only once) or sequential (Active Learning)
                            util_func='dkl',  # criteria for bal (dkl, bme, ie, dkl_bme) or SF (default: global_mc)
                            eval_step=1,  # every how many iterations to evaluate the surrogate
@@ -168,13 +168,13 @@ if __name__ == '__main__':
     # Arrays to save results ---------------------------------------------------------------------------- #
 
     bayesian_dict = {'N_tp': np.zeros(exp_design.n_iter + 1),
-                      'BME': np.zeros(exp_design.n_iter + 1),  # To save BME value for each GPE, after training
-                      'ELPD': np.zeros(exp_design.n_iter + 1),
-                      'RE': np.zeros(exp_design.n_iter + 1),  # To save RE value for each GPE, after training
-                      'IE': np.zeros(exp_design.n_iter + 1),
-                      'post_size': np.zeros(exp_design.n_iter + 1),
-                      f'{exp_design.exploit_method}_{exp_design.util_func}': np.zeros(exp_design.n_iter),
-                      'util_func': np.empty(exp_design.n_iter, dtype=object)}
+                     'BME': np.zeros(exp_design.n_iter + 1),  # To save BME value for each GPE, after training
+                     'ELPD': np.zeros(exp_design.n_iter + 1),
+                     'RE': np.zeros(exp_design.n_iter + 1),  # To save RE value for each GPE, after training
+                     'IE': np.zeros(exp_design.n_iter + 1),
+                     'post_size': np.zeros(exp_design.n_iter + 1),
+                     f'{exp_design.exploit_method}_{exp_design.util_func}': np.zeros(exp_design.n_iter),
+                     'util_func': np.empty(exp_design.n_iter, dtype=object)}
 
     eval_dict = {}
 
@@ -192,12 +192,12 @@ if __name__ == '__main__':
 
         # 1. Train surrogate
         if exp_design.gpr_lib == 'skl':
-            sm = SklTraining(collocation_points=collocation_points, model_evaluations=model_evaluations,
+            sm = SklTraining(train_x=collocation_points, train_y=model_evaluations,
                              noise=False,
-                             kernel_name='RBF', kernel_anisotrpoy=False,
+                             kernel_type='RBF', kernel_isotropy=True,
                              alpha=1e-6,
                              n_restarts=10,
-                             parallelize=True)
+                             parallelize=False)
 
         elif exp_design.gpr_lib == 'gpy':
             # 1.1. Set up the kernel
