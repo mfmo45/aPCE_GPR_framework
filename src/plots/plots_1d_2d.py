@@ -7,7 +7,7 @@ import math
 from src.plots.plots_config import *
 
 
-def plot_1d_gpe_bal(gpr_x, gpr_y, conf_int_lower, conf_int_upper, bal_x, bal_y, tp_x, tp_y, it, true_y, true_x=None,
+def plot_1d_gpe_bal(gpr_x, gpr_y, gpr_std, bal_x, bal_y, tp_x, tp_y, it, true_y, true_x=None,
                     analytical=None):
     """
         Plots the GPE run + BAL step, including GPE predictions, training points and confidence intervals.Additionally, it
@@ -17,8 +17,7 @@ def plot_1d_gpe_bal(gpr_x, gpr_y, conf_int_lower, conf_int_upper, bal_x, bal_y, 
         ----------
         :param gpr_x: np.array [mc_size, 1], parameter values where GPE was evaluated (X)
         :param gpr_y: np.array [mc_size, n_obs], GPE prediction values (Y)
-        :param conf_int_lower: np.array [mc_size, n_obs], 95% lower confidence intervals for each gpr_y from GPE
-        :param conf_int_upper: np.array [mc_size, n_obs], 95% upper confidence intervals for each gpr_y from GPE
+        :param gpr_std: np.array [mc_size, n_obs], GPE standard deviation values
         :param bal_x: np.array [d_size, 1], parameter values explored in BAL
         :param bal_y: np.array [d_size, 1], BAL criteria values obtained for each exploration point in bal_x
         :param tp_x: np.array [#tp+1, 1], parameter values from training points
@@ -28,119 +27,135 @@ def plot_1d_gpe_bal(gpr_x, gpr_y, conf_int_lower, conf_int_upper, bal_x, bal_y, 
         :param analytical: np.array [2, mc_size], x and y values evaluated in forward model or None (to not plot it)
         :param it: int , number of iteration, for plot title
         """
-    n_o = gpr_y.shape[1]
+    y_items = gpr_y.items()
+    # bal_y_mod = np.nan_to_num(bal_y, nan=0)
+    bal_y_mod = bal_y
 
-    if n_o == 10:
-        rows = int(n_o/2)
-        cols = 2
-    elif n_o == 1:
-        rows = 1
-        cols = 1
-    else:
-        rows = 3
-        cols = 1
+    for key, y_gp in y_items:
+        n_o = y_gp.shape[1]
 
-    fig, ax = plt.subplots(rows, cols, sharex=True)
-
-    if n_o > 1:
-        loop_item = ax.reshape(-1)
-    else:
-        loop_item = np.array([ax])
-
-    for o, ax_i in enumerate(loop_item):
-        # Get overall limits:
-        # GPR limits:
-        lims_gpr = np.array([math.floor(np.min(conf_int_lower)), math.ceil(np.max(conf_int_upper))])
-        # Get limits
-        lims_x = [math.floor(np.min(gpr_x)), math.ceil(np.max(gpr_x))]
-
-        if analytical is not None:
-            # order analytical evaluations
-            a_data = analytical[:, analytical[0, :].argsort()]
-            # Analytical limits
-            lims_an = np.array([math.floor(np.min(analytical[1, :])), math.ceil(np.max(analytical[1, :]))])
-            # Max limit is defined by gpr and analytical
-            lims_y = [np.min(np.array([lims_gpr[0], lims_an[0]])), np.max(np.array([lims_gpr[1], lims_an[1]]))]
+        if n_o == 10:
+            rows = int(n_o/2)
+            cols = 2
+        elif n_o == 1:
+            rows = 1
+            cols = 1
         else:
-            lims_y = lims_gpr
+            rows = n_o
+            cols = 1
 
-        # GPE data ---------------------------------------------------------------
-        data = np.vstack((gpr_x[:, 0], gpr_y[:, o], conf_int_lower[:, o], conf_int_upper[:, o]))
-        gpr_data = data[:, data[0, :].argsort()]
+        fig, ax = plt.subplots(rows, cols, sharex=True)
 
-        ax_i.plot(gpr_data[0, :], gpr_data[1, :], label="GPE mean", linewidth=1, color='b', zorder=1)
-        ax_i.fill_between(gpr_data[0, :].ravel(), gpr_data[2, :], gpr_data[3, :], alpha=0.5,
-                          label=r"95% confidence interval")
-
-        # TP ---------------------------------------------------------------------
-        # Find GPR result for max RE
-        # max_score = np.argmax(bal_y)
-        # ind = np.where(gpr_x == tp_x[-1])[0][0]
-        # newp = np.array([gpr_x[ind], gpr_y[o, ind]], dtype=object)
-
-        ax_i.scatter(tp_x[:-1], tp_y[:-1, o], label="TP", color="b", zorder=2)  # s=500
-        ax_i.scatter(tp_x[-1], tp_y[-1, o], color="r", marker="x", zorder=2, linewidths=3)  # s=800
-        # ax_i.scatter(newp[0], newp[1], color="r", marker="x", zorder=2, linewidths=3)  # s=800
-
-        # Plot observation ----------------------------------------------------------------
-        if true_x is not None:
-            ax_i.scatter(true_x[0, 0], true_y[0, o], marker="*", color="g", zorder=2)  # s=500
+        if n_o > 1:
+            loop_item = ax.reshape(-1)
         else:
-            ax_i.plot([np.min(gpr_x), np.max(gpr_y)], [true_y[0, o], true_y[0, o]], color="g", linestyle="dotted")
+            loop_item = np.array([ax])
 
-        # Plot analytical data
-        if analytical is not None:
-            ax.plot(a_data[0, :], a_data[1, :], color='k', linewidth=1, linestyle="dashed", label="f(x)", zorder=1)
+        # get confidence intervals:
+        conf_int_upper = y_gp + (1.96 * gpr_std[key])
+        conf_int_lower = y_gp - (1.96 * gpr_std[key])
 
-        # Legends
-        handles, labels = ax_i.get_legend_handles_labels()
+        for o, ax_i in enumerate(loop_item):
+            # Get overall limits:
+            # GPR limits:
+            lims_gpr = np.array([math.floor(np.min(conf_int_lower)), math.ceil(np.max(conf_int_upper))])
+            # Get limits
+            lims_x = [math.floor(np.min(gpr_x)), math.ceil(np.max(gpr_x))]
 
-        # BAL criteria -------------------------------------------------------------------------------
-        # Order Criteria (RE) results
-        data = np.vstack((bal_x.T, bal_y.T))
-        re_data = data[:, data[0, :].argsort()]
+            if analytical is not None:
+                # order analytical evaluations
+                a_data = analytical[:, analytical[0, :].argsort()]
+                # Analytical limits
+                lims_an = np.array([math.floor(np.min(analytical[1, :])), math.ceil(np.max(analytical[1, :]))])
+                # Max limit is defined by gpr and analytical
+                lims_y = [np.min(np.array([lims_gpr[0], lims_an[0]])), np.max(np.array([lims_gpr[1], lims_an[1]]))]
+            else:
+                lims_y = lims_gpr
 
-        ax2 = ax_i.twinx()
-        ax2.plot(re_data[0, :], re_data[1, :], color="orange", linewidth=2)
-        ax2.fill_between(re_data[0, :], re_data[1, :], alpha=0.4, color="orange", label="SD criteria")
+            # GPE data ---------------------------------------------------------------
+            data = np.vstack((gpr_x[:, 0], y_gp[:, o], conf_int_lower[:, o], conf_int_upper[:, o]))
+            gpr_data = data[:, data[0, :].argsort()]
 
-        h, lab = ax2.get_legend_handles_labels()
-        handles = handles + h
-        labels = labels + lab
+            ax_i.plot(gpr_data[0, :], gpr_data[1, :], label="GPE mean", linewidth=1, color='b', zorder=1)
+            ax_i.fill_between(gpr_data[0, :].ravel(), gpr_data[2, :], gpr_data[3, :], alpha=0.5,
+                              label=r"95% confidence interval")
 
-        # Set limits --------------------------------------------------------------------------------
-        ax_i.set_xlim(lims_x)
-        ax_i.set_ylim([lims_y[0] - (0.5 * (lims_y[1] - lims_y[0])), lims_y[1] * 1.1])
-        ax2.set_ylim([0, np.max(bal_y) * 3])
-        # ax.set_xlim([0, 10])
-        # ax2.set_ylim([0, 8])
-        # ax.set_ylim([-15, np.max(gpr_data)+10])
+            # TP ---------------------------------------------------------------------
+            # Find GPR result for max RE
+            # max_score = np.argmax(bal_y)
+            # ind = np.where(gpr_x == tp_x[-1])[0][0]
+            # newp = np.array([gpr_x[ind], gpr_y[o, ind]], dtype=object)
 
-        # set labels ------------------------------------------------------------------------------------
-        # ax_i.set_xlabel("Parameter value")
-        # ax_i.set_ylabel("Y")
-        # ax2.set_ylabel("BAL Criteria")
-        # ax.axes.xaxis.set_visible(False)
-        # ax.axes.yaxis.set_visible(False)
-        # ax2.axes.yaxis.set_visible(False)
+            ax_i.scatter(tp_x[:-1], tp_y[key][:-1, o], label="TP", color="b", zorder=2)  # s=500
+            ax_i.scatter(tp_x[-1], tp_y[key][-1, o], color="r", marker="x", zorder=2, linewidths=3)  # s=800
+            # ax_i.scatter(newp[0], newp[1], color="r", marker="x", zorder=2, linewidths=3)  # s=800
 
-    if n_o > 4:
-        fig.text(0.5, 0.1, "Parameter value", ha='center')
-        fig.text(0.04, 0.5, "Model output", ha='center', rotation='vertical')
-        fig.text(0.96, 0.5, "BAL Criteria", ha='center', rotation='vertical')
-    elif n_o == 1:
-        ax_i.set_xlabel("Parameter value")
-        ax_i.set_ylabel("Y")
-        ax2.set_ylabel("BAL Criteria")
+            # Plot observation ----------------------------------------------------------------
+            if true_x is not None:
+                ax_i.scatter(true_x[0, 0], true_y[key][0, o], marker="*", color="g", zorder=2)  # s=500
+            else:
+                ax_i.plot([np.min(gpr_x), np.max(y_gp)], [true_y[key][0, o], true_y[key][0, o]], color="g", linestyle="dotted")
 
-    fig.suptitle(f'Iteration={it + 1}')
-    fig.tight_layout()
-    plt.subplots_adjust(top=0.92, bottom=0.18, wspace=0.3, hspace=0.3)
-    fig.legend(handles, labels, loc='lower center', ncol=5)
-    plt.show(block=False)
+            # Plot analytical data
+            if analytical is not None:
+                ax.plot(a_data[0, :], a_data[1, :], color='k', linewidth=1, linestyle="dashed", label="f(x)", zorder=1)
+
+            # Legends
+            handles, labels = ax_i.get_legend_handles_labels()
+
+            # BAL criteria -------------------------------------------------------------------------------
+            # Order Criteria (RE) results
+
+            data = np.vstack((bal_x.T, bal_y_mod.T))
+            re_data = data[:, data[0, :].argsort()]
+
+            ax2 = ax_i.twinx()
+            ax2.plot(re_data[0, :], re_data[1, :], color="orange", linewidth=2)
+            # ax2.fill_between(re_data[1, :]-1, re_data[1, :], alpha=0.4, color="orange", label="SD criteria")
+
+            h, lab = ax2.get_legend_handles_labels()
+            handles = handles + h
+            labels = labels + lab
+
+            # Set limits --------------------------------------------------------------------------------
+            ax_i.set_xlim(lims_x)
+            ax_i.set_ylim([lims_y[0] - (0.5 * (lims_y[1] - lims_y[0])), lims_y[1] * 1.1])
+
+            non_nan_mask = ~np.isnan(bal_y)
+            if np.all(bal_y[non_nan_mask] <= 0):
+                x = np.nanmin(bal_y)
+                ax2.set_ylim([np.nanmin(bal_y), np.nanmin(bal_y) - np.nanmin(bal_y)* 1])
+            else:
+                ax2.set_ylim([0, np.nanmax(bal_y) * 3])
+            # ax.set_xlim([0, 10])
+            # ax2.set_ylim([0, 8])
+            # ax.set_ylim([-15, np.max(gpr_data)+10])
+
+            # set labels ------------------------------------------------------------------------------------
+            # ax_i.set_xlabel("Parameter value")
+            # ax_i.set_ylabel("Y")
+            # ax2.set_ylabel("BAL Criteria")
+            # ax.axes.xaxis.set_visible(False)
+            # ax.axes.yaxis.set_visible(False)
+            # ax2.axes.yaxis.set_visible(False)
+
+        if n_o > 4:
+            fig.text(0.5, 0.1, "Parameter value", ha='center')
+            fig.text(0.04, 0.5, "Model output", ha='center', rotation='vertical')
+            fig.text(0.96, 0.5, "BAL Criteria", ha='center', rotation='vertical')
+        elif n_o == 1:
+            ax_i.set_xlabel("Parameter value")
+            ax_i.set_ylabel("Y")
+            ax2.set_ylabel("BAL Criteria")
+
+        fig.suptitle(f'Iteration={it + 1}')
+        fig.tight_layout()
+        plt.subplots_adjust(top=0.92, bottom=0.18, wspace=0.3, hspace=0.3)
+        fig.legend(handles, labels, loc='lower center', ncol=5)
+        plt.show(block=False)
 
 
-def plot_1d_gpe_final(gpr_x, gpr_y, conf_int_lower, conf_int_upper, tp_x, tp_y, tp_init, it, true_y, true_x=None,
+def plot_1d_gpe_final(gpr_x, gpr_y, gpr_std, tp_x, tp_y, tp_init, it, true_y, true_x=None,
                       analytical=None, save_name=None):
     """
 
@@ -149,10 +164,8 @@ def plot_1d_gpe_final(gpr_x, gpr_y, conf_int_lower, conf_int_upper, tp_x, tp_y, 
             parameter values where surrogate was evaluated (X)
         gpr_y: [mc_size, n_obs]
             GPE prediction values (Y) when evaluated at gpr_x
-        conf_int_lower: [mc_size, n_obs]
-            95% lower confidence intervals for each gpr_y from GPE
-        conf_int_upper: [mc_size, n_obs]
-            95% upper confidence intervals for each gpr_y from GPE
+        gpr_std: [mc_size, n_obs]
+            GPE standard deviation values
         tp_x: np.array [n_tp, 1]
             training point values
         tp_y: array [n_tp, n_obs]
@@ -174,107 +187,115 @@ def plot_1d_gpe_final(gpr_x, gpr_y, conf_int_lower, conf_int_upper, tp_x, tp_y, 
 
     """
 
-    n_o = gpr_y.shape[1]
-    del_last = False
-    if n_o == 1:
-        rows = 1
-        cols = 1
-    elif (n_o % 2) == 0:
-        rows = int(n_o/2)
-        cols = 2
-    elif (n_o % 3) == 0:
-        rows = int(n_o / 3)
-        cols = 3
-    else:
-        rows = math.ceil(n_o / 2)
-        cols = 2
-        del_last = True
+    y_items = gpr_y.items()
 
-    fig, ax = plt.subplots(rows, cols, sharex=True)
-    if del_last:
-        ax[rows-1, cols-1].remove()
+    for key, y_gp in y_items:
 
-    if n_o > 1:
-        loop_item = ax.reshape(-1)
-    else:
-        loop_item = np.array([ax])
-
-    for o, ax_i in enumerate(loop_item):
-        # Get overall limits:
-        # GPR limits:
-        lims_gpr = np.array([math.floor(np.min(conf_int_lower)), math.ceil(np.max(conf_int_upper))])
-        # Get limits
-        lims_x = [math.floor(np.min(gpr_x)), math.ceil(np.max(gpr_x))]
-
-        if analytical is not None:
-            # order analytical evaluations
-            a_data = analytical[:, analytical[0, :].argsort()]
-            # Analytical limits
-            lims_an = np.array([math.floor(np.min(analytical[1, :])), math.ceil(np.max(analytical[1, :]))])
-            # Max limit is defined by gpr and analytical
-            lims_y = [np.min(np.array([lims_gpr[0], lims_an[0]])), np.max(np.array([lims_gpr[1], lims_an[1]]))]
+        n_o = y_gp.shape[1]
+        del_last = False
+        if n_o == 1:
+            rows = 1
+            cols = 1
+        elif (n_o % 2) == 0:
+            rows = int(n_o/2)
+            cols = 2
+        elif (n_o % 3) == 0:
+            rows = int(n_o / 3)
+            cols = 3
         else:
-            lims_y = lims_gpr
+            rows = math.ceil(n_o / 2)
+            cols = 2
+            del_last = True
 
-        # GPE data ---------------------------------------------------------------
-        try:
-            data = np.vstack((gpr_x[:, 0], gpr_y[:, o], conf_int_lower[:, o], conf_int_upper[:, o]))
-            gpr_data = data[:, data[0, :].argsort()]
+        # get confidence intervals:
+        conf_int_upper = y_gp + (1.96 * gpr_std[key])
+        conf_int_lower = y_gp - (1.96 * gpr_std[key])
 
-            ax_i.plot(gpr_data[0, :], gpr_data[1, :], label="GPE mean", linewidth=1, color='b', zorder=1)
-            ax_i.fill_between(gpr_data[0, :].ravel(), gpr_data[2, :], gpr_data[3, :], alpha=0.5,
-                              label=r"95% confidence interval")
-        except:
-            break
+        fig, ax = plt.subplots(rows, cols, sharex=True)
+        if del_last:
+            ax[rows-1, cols-1].remove()
 
-        # TP ---------------------------------------------------------------------
-        # Color map:
-        cm = plt.cm.get_cmap('YlGn')
-        cls = []
-        tot = tp_x.shape[0]-tp_init+1
-        for i in range(1, tp_x.shape[0]-tp_init+1):
-            cls.append(cm(i/tot))
-
-        ax_i.scatter(tp_x[0:tp_init], tp_y[0:tp_init, o], label="TP", color="k", zorder=2)  # s=500
-        ax_i.scatter(tp_x[tp_init:], tp_y[tp_init:, o], color=cls, marker="x", zorder=2, linewidths=3, label="BAL TP")  # s=800
-
-        # Plot observation ----------------------------------------------------------------
-        if true_x is not None:
-            ax_i.scatter(true_x[0, 0], true_y[0, o], marker="*", color="g", zorder=2)  # s=500
+        if n_o > 1:
+            loop_item = ax.reshape(-1)
         else:
-            ax_i.plot([np.min(gpr_x), np.max(gpr_y)], [true_y[0, o], true_y[0, o]], color="g", linestyle="dotted")
+            loop_item = np.array([ax])
 
-        # Plot analytical data
-        if analytical is not None:
-            ax.plot(a_data[0, :], a_data[1, :], color='k', linewidth=1, linestyle="dashed", label="f(x)", zorder=1)
+        for o, ax_i in enumerate(loop_item):
+            # Get overall limits:
+            # GPR limits:
+            lims_gpr = np.array([math.floor(np.min(conf_int_lower[:, o])), math.ceil(np.max(conf_int_upper[:, o]))])
+            # Get limits
+            lims_x = [math.floor(np.min(gpr_x)), math.ceil(np.max(gpr_x))]
 
-        # Legends
-        handles, labels = ax_i.get_legend_handles_labels()
+            if analytical is not None:
+                # order analytical evaluations
+                a_data = analytical[key][:, analytical[key][0, :].argsort()]
+                # Analytical limits
+                lims_an = np.array([math.floor(np.min(analytical[1, :])), math.ceil(np.max(analytical[1, :]))])
+                # Max limit is defined by gpr and analytical
+                lims_y = [np.min(np.array([lims_gpr[0], lims_an[0]])), np.max(np.array([lims_gpr[1], lims_an[1]]))]
+            else:
+                lims_y = lims_gpr
 
-        # Set limits --------------------------------------------------------------------------------
-        ax_i.set_xlim(lims_x)
-        ax_i.set_ylim([lims_y[0] - (0.5 * (lims_y[1] - lims_y[0])), lims_y[1] * 1.1])
+            # GPE data ---------------------------------------------------------------
+            try:
+                data = np.vstack((gpr_x[:, 0], y_gp[:, o], conf_int_lower[:, o], conf_int_upper[:, o]))
+                gpr_data = data[:, data[0, :].argsort()]
 
-        # set labels ------------------------------------------------------------------------------------
-        # ax_i.set_xlabel("Parameter value")
-        # ax_i.set_ylabel("Y")
-        # ax.axes.xaxis.set_visible(False)
-        # ax.axes.yaxis.set_visible(False)
+                ax_i.plot(gpr_data[0, :], gpr_data[1, :], label="GPE mean", linewidth=1, color='b', zorder=1)
+                ax_i.fill_between(gpr_data[0, :].ravel(), gpr_data[2, :], gpr_data[3, :], alpha=0.5,
+                                  label=r"95% confidence interval")
+            except:
+                break
 
-    if n_o > 4:
-        fig.text(0.5, 0.1, "Parameter value", ha='center')
-        fig.text(0.04, 0.5, "Model output", ha='center', rotation='vertical')
-    elif n_o == 1:
-        ax_i.set_xlabel("Parameter value")
-        ax_i.set_ylabel("Y")
+            # TP ---------------------------------------------------------------------
+            # Color map:
+            cm = plt.cm.get_cmap('YlGn')
+            cls = []
+            tot = tp_x.shape[0]-tp_init+1
+            for i in range(1, tp_x.shape[0]-tp_init+1):
+                cls.append(cm(i/tot))
 
-    fig.suptitle(f'Iteration={it + 1}')
-    fig.tight_layout()
-    plt.subplots_adjust(top=0.92, bottom=0.18, wspace=0.3, hspace=0.3)
-    fig.legend(handles, labels, loc='lower center', ncol=5)
-    if save_name is not None:
-        plt.savefig(save_name)
-    plt.show(block=False)
+            ax_i.scatter(tp_x[0:tp_init], tp_y[key][0:tp_init, o], label="TP", color="k", zorder=2)  # s=500
+            ax_i.scatter(tp_x[tp_init:], tp_y[key][tp_init:, o], color=cls, marker="x", zorder=2, linewidths=3, label="BAL TP")  # s=800
+
+            # Plot observation ----------------------------------------------------------------
+            if true_x is not None:
+                ax_i.scatter(true_x[0, 0], true_y[0, o], marker="*", color="g", zorder=2)  # s=500
+            else:
+                ax_i.plot([np.min(gpr_x), np.max(y_gp)], [true_y[key][0, o], true_y[key][0, o]], color="g", linestyle="dotted")
+
+            # Plot analytical data
+            if analytical is not None:
+                ax.plot(a_data[0, :], a_data[1, :], color='k', linewidth=1, linestyle="dashed", label="f(x)", zorder=1)
+
+            # Legends
+            handles, labels = ax_i.get_legend_handles_labels()
+
+            # Set limits --------------------------------------------------------------------------------
+            ax_i.set_xlim(lims_x)
+            ax_i.set_ylim([lims_y[0] - (0.5 * (lims_y[1] - lims_y[0])), lims_y[1] * 1.1])
+
+            # set labels ------------------------------------------------------------------------------------
+            # ax_i.set_xlabel("Parameter value")
+            # ax_i.set_ylabel("Y")
+            # ax.axes.xaxis.set_visible(False)
+            # ax.axes.yaxis.set_visible(False)
+
+        if n_o > 4:
+            fig.text(0.5, 0.1, "Parameter value", ha='center')
+            fig.text(0.04, 0.5, "Model output", ha='center', rotation='vertical')
+        elif n_o == 1:
+            ax_i.set_xlabel("Parameter value")
+            ax_i.set_ylabel("Y")
+
+        fig.suptitle(f'Iteration={it + 1}')
+        fig.tight_layout()
+        plt.subplots_adjust(top=0.92, bottom=0.18, wspace=0.3, hspace=0.3)
+        fig.legend(handles, labels, loc='lower center', ncol=5)
+        if save_name is not None:
+            plt.savefig(save_name)
+        plt.show(block=False)
 
 
 def plot_likelihoods(gpe_prior, gpe_likelihood, ref_prior, ref_likelihood, n_iter=None, save_name=None):
