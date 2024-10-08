@@ -18,8 +18,7 @@ sys.path.append(str(par_path / 'src/surrogate_modelling'))
 sys.path.append(str(par_path / 'src/utils'))
 
 from analytical_model import nonlinear_model
-from src.plots.plots_1d_2d import plot_likelihoods, plot_combined_bal
-from plots_3d import plot_1d_gpe_final, plot_1d_gpe_bal
+from src.plots.plots_1d_2d import plot_likelihoods, plot_combined_bal, plot_1d_gpe_bal, plot_1d_gpe_final
 
 from src.surrogate_modelling.bal_functions import BayesianInference, SequentialDesign
 from src.surrogate_modelling.gpe_skl import *
@@ -82,7 +81,7 @@ if __name__ == '__main__':
         Inputs.add_marginals()   # Create marginal for parameter "i"
         Inputs.Marginals[i].name = "$\\theta_{" + str(i + 1) + "}$"    # Parameter name
         Inputs.Marginals[i].dist_type = 'uniform'    # Parameter distribution (see exp_design.py --> build_dist()
-        Inputs.Marginals[i].parameters = [-5, 5]                       # Inputs needed for districution
+        Inputs.Marginals[i].parameters = [-3, 3]                       # Inputs needed for districution
 
     # Experimental design: ....................................................................
 
@@ -91,7 +90,7 @@ if __name__ == '__main__':
                            explore_method='random',  # method to sample from parameter set for active learning
                            training_step=1,  # No. of training points to sample in each iteration
                            sampling_method='sobol',  # how to sample the initial training points
-                           main_meta_model='gpr',  # main surrogate method: 'gpr' or 'apce'
+                           main_meta_model=gp_library,  # main surrogate method: 'gpr' or 'apce'
                            n_initial_tp=50,  # Number of initial training points (min = n_trunc*2)
                            n_max_tp=50,  # max number of tp to use
                            training_method='sequential',  # normal (train only once) or sequential (Active Learning)
@@ -102,10 +101,6 @@ if __name__ == '__main__':
 
     exp_design.setup_ED_()
 
-    # setup surrogate model data:
-    if exp_design.main_meta_model == 'gpr':
-        exp_design.setup_gpe(library='skl'     # set gpy or skl as libraries
-                             )
     print(
         f'<<< Will run <{exp_design.n_iter + 1}> GP training iterations and <{exp_design.n_evals}> GP evaluations. >>>')
 
@@ -120,7 +115,7 @@ if __name__ == '__main__':
                                                      sampling_method=exp_design.sampling_method)
     model_evaluations = nonlinear_model(params=collocation_points, loc=pt_loc, as_dict=True)
     """Note: The collocation points and model evaluations should be in numpy-array form, and in the order needed by 
-    the gpe_skl.py or gpe_gpytorh.py classes"""
+    the gpe_skl.py or gpe_gpytorch.py classes"""
 
     # =====================================================
     # =============   Validation points  ================
@@ -191,7 +186,7 @@ if __name__ == '__main__':
     for it in range(0, exp_design.n_iter + 1):  # Train the GPE a maximum of "iteration_limit" times
 
         # 1. Train surrogate
-        if exp_design.gpr_lib == 'skl':
+        if gp_library == 'skl':
             sm = SklTraining(train_x=collocation_points, train_y=model_evaluations,
                              noise=False,
                              kernel_type='RBF', kernel_isotropy=True,
@@ -199,21 +194,12 @@ if __name__ == '__main__':
                              n_restarts=10,
                              parallelize=False)
 
-        elif exp_design.gpr_lib == 'gpy':
-            # 1.1. Set up the kernel
-            kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(ard_num_dims=ndim))
-
-            # 1.2. Set up Likelihood
-            likelihood = gpytorch.likelihoods.GaussianLikelihood(
-                noise_constraint=gpytorch.constraints.GreaterThan(1e-6))
-            # Modify default kernel/likelihood values:
-            # likelihood.noise = 1e-5   # Initialize the noise with a very small value.
-
+        elif gp_library == 'gpy':
             # 1.3. Train a GPE, which consists of a gpe for each location being evaluated
-            sm = GPyTraining(collocation_points=collocation_points, model_evaluations=model_evaluations,
-                             likelihood=likelihood, kernel=kernel,
-                             training_iter=100,
-                             optimizer="adam",
+            sm = GPyTraining(train_X=collocation_points, train_y=model_evaluations,
+                             kernel_type='Matern', kernel_isotropy=True, noise=True,
+                             training_iter=100, n_restarts=1, y_normalization=True,
+                             optimizer="Adam",
                              verbose=False)
 
         # Train the GPR
@@ -232,12 +218,12 @@ if __name__ == '__main__':
                                             n_tp=collocation_points.shape[0])
 
             # Save GP after evaluation ...................
-            save_name = results_folder / f'gpr_{exp_design.gpr_lib}_TP{collocation_points.shape[0]:02d}_{exp_design.exploit_method}.pickle'
+            save_name = results_folder / f'gpr_{exp_design.main_meta_model}_TP{collocation_points.shape[0]:02d}_{exp_design.exploit_method}.pickle'
             sm.Exp_Design = exp_design
             pickle.dump(sm, open(save_name, "wb"))
 
             # Save eval_criteria dictionaries .........................
-            save_name = results_folder / f'Validation_{exp_design.gpr_lib}_{exp_design.exploit_method}.pickle'
+            save_name = results_folder / f'Validation_{exp_design.main_meta_model}_{exp_design.exploit_method}.pickle'
             pickle.dump(eval_dict, open(save_name, "wb"))
 
         # 3. Compute Bayesian scores in parameter space ----------------------------------------------------------
@@ -279,17 +265,17 @@ if __name__ == '__main__':
                     model_evaluations[key] = np.vstack((model_evaluations[key], new_output[key]))
 
             # Plot process
-            # if it % exp_design.eval_step == 0:
-            #     if ndim == 1:
-            #
-            #         plot_1d_gpe_bal(gpr_x=prior, gpr_y=surrogate_output, gpr_std=surrogate_std, bal_x=SD.candidates,
-            #                         bal_y=SD.total_score, tp_x=collocation_points, tp_y=model_evaluations, it=it,
-            #                         true_y=obs)
-            #     # if ndim < 3:
-            #     #     plot_likelihoods(prior, bi_gpe.likelihood, prior, ref_scores.likelihood,
-            #     #                      n_iter=it + 1)
-            #
-            #     stop=1
+            if it % exp_design.eval_step == 0:
+                if ndim == 1:
+
+                    plot_1d_gpe_bal(gpr_x=prior, gpr_y=surrogate_output, gpr_std=surrogate_std, bal_x=SD.candidates,
+                                    bal_y=SD.total_score, tp_x=collocation_points, tp_y=model_evaluations, it=it,
+                                    true_y=obs)
+                # if ndim < 3:
+                #     plot_likelihoods(prior, bi_gpe.likelihood, prior, ref_scores.likelihood,
+                #                      n_iter=it + 1)
+
+                stop=1
 
         logger.info(f'------------ Finished iteration {it + 1}/{exp_design.n_iter} -------------------')
 
